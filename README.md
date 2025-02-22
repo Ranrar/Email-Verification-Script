@@ -116,3 +116,11 @@ including:
    - Maintains a log of all email validation attempts for auditing email 
      systems and ensuring compliance with certain regulations or internal 
      standards.
+
+## Future Update
+
+1.   Unique Identification Number: Add a unique identification number starting from 1 to the log file and the program.
+2.   Search:  Sarch for specific emails or domains in the log and display the information on the screen.
+4.   Run Log: Re-run the log to check if any parameters have been updated and display them on the screen.
+5.   irewall chek: Perform a basic firewall test externally to verify if all required ports are available.
+6.   File Import: Import a CSV file for email verification.
