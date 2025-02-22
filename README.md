@@ -124,3 +124,4 @@ including:
 4.   Run Log: Re-run the log to check if any parameters have been updated and display them on the screen.
 5.   irewall chek: Perform a basic firewall test externally to verify if all required ports are available.
 6.   File Import: Import a CSV file for email verification.
+7.   Bonce email chek
