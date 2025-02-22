@@ -119,9 +119,11 @@ including:
 
 ## Future Update
 
-1.   Unique Identification Number: Add a unique identification number starting from 1 to the log file and the program.
-2.   Search:  Sarch for specific emails or domains in the log and display the information on the screen.
-4.   Run Log: Re-run the log to check if any parameters have been updated and display them on the screen.
-5.   irewall chek: Perform a basic firewall test externally to verify if all required ports are available.
-6.   File Import: Import a CSV file for email verification.
-7.   Bonce email chek
+1.   Search:  Sarch for specific emails or domains in the log and display the information on the screen.
+2.   Run Log: Re-run the log to check if any parameters have been updated and display them on the screen.
+3.   irewall chek: Perform a basic firewall test externally to verify if all required ports are available.
+4.   File Import: Import a CSV file for email verification.
+5.   Bonce email chek
+6.   Propper SQL databe log with encryption
+7.   Promt the user first time to create a user name and PASS to the SQL
+8.   Change the standart SQL user and PASS in the script
