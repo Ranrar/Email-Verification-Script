@@ -26,6 +26,9 @@ import logging
 from config import Config
 from datetime import datetime, timedelta
 from functools import wraps
+from cryptography.fernet import Fernet
+from database import Database
+import getpass
 
 def ttl_cache(maxsize=128, ttl=600):
     """Time-based cache decorator with maximum size limit"""
@@ -65,8 +68,14 @@ def ttl_cache(maxsize=128, ttl=600):
 # Create a config instance
 config = Config()
 
+# Define SCRIPT_IDENTITY
+SCRIPT_IDENTITY = {
+    'User-Agent': config.USER_AGENT,
+    'From': f"Email: {config.USER_CREDENTIALS.USER_EMAIL}"
+}
+
 # List required external dependencies (modules not included in the standard library)
-required_dependencies = ["dns", "requests", "tabulate"]
+required_dependencies = ["dns", "requests", "tabulate", "sqlite3", "cryptography"]
 missing_dependencies = []
 
 for dep in required_dependencies:
@@ -110,7 +119,7 @@ from typing import Optional, List
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler('program.log'),
@@ -387,91 +396,37 @@ def sanitize_log_entry(value):
     value = re.sub(r'\s+', ' ', value)  # Replace multiple spaces with single space
     return value.strip()
 
-def log_email_check(email, mx_record, spf_status, dkim_status, smtp_result, used_port, domain,
-                    error_message="", catch_all_email="", disposable_status="",
-                    smtp_vrfy_result="", blacklist_info="", mx_preferences="", smtp_banner="", mx_ip="",
-                    imap_status="", imap_banner="", pop3_status="", pop3_banner=""):
-    """Log email check results"""
-    
-    # Create dictionary of values
-    values = {
-        "Email": email,
-        "Domain": domain,
-        "Result": smtp_result,
-        "Error": error_message,
-        "Disposable": disposable_status,
-        "SPF": spf_status,
-        "DKIM": dkim_status,
-        "Blacklist": blacklist_info,
-        "MX": mx_record,
-        "Port": used_port,
-        "IP": mx_ip,
-        "MXPref": mx_preferences,
-        "SMTP": smtp_banner,
-        "VRFY": smtp_vrfy_result,
-        "Catch": catch_all_email,
-        "IMAP": imap_status,
-        "IMAPInfo": imap_banner,
-        "POP3": pop3_status,
-        "POP3Info": pop3_banner,
-        "Time": datetime.now().strftime("%d-%m-%y %H:%M"),
-        "Count": 1
+def log_email_check(email, mx_record, spf_status, dkim_status, smtp_result, port, domain, **kwargs):
+    """Log email verification results to database"""
+    data = {
+        'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        'email': email,
+        'domain': domain,
+        'result': smtp_result,
+        'mx_record': mx_record,
+        'port': port,
+        'disposable': kwargs.get('disposable_status', ''),
+        'spf_status': spf_status,
+        'dkim_status': dkim_status,
+        'catch_all': kwargs.get('catch_all_email', ''),
+        'smtp_result': smtp_result,
+        'smtp_vrfy': kwargs.get('smtp_vrfy_result', ''),
+        'blacklist_info': kwargs.get('blacklist_info', ''),
+        'mx_preferences': kwargs.get('mx_preferences', ''),
+        'smtp_banner': kwargs.get('smtp_banner', ''),
+        'mx_ip': kwargs.get('mx_ip', ''),
+        'error_message': kwargs.get('error_message', ''),
+        'imap_status': kwargs.get('imap_status', ''),
+        'imap_banner': kwargs.get('imap_banner', ''),
+        'pop3_status': kwargs.get('pop3_status', ''),
+        'pop3_banner': kwargs.get('pop3_banner', '')
     }
-
-    # Read existing log entries
-    rows = []
-    header_written = False
-    existing_entry = False
-    existing_id = None
-
-    if os.path.isfile(LOG_FILE):
-        with open(LOG_FILE, mode="r", newline="") as file:
-            reader = csv.reader(file)
-            header = next(reader, None)  # Get header row
-            rows = list(reader)  # Get data rows only
-            if header:
-                header_written = True
-                # Check for existing entry in data rows
-                for row in rows:
-                    if row and len(row) > 2 and row[2] == email:  # Email column
-                        existing_entry = True
-                        existing_id = row[0]
-                        break
-
-    # Get next ID for new entries only
-    if not existing_entry:
-        next_id = 1
-        if rows:  # If we have any data rows
-            ids = [int(row[0]) for row in rows if row and row[0].isdigit()]
-            if ids:
-                next_id = max(ids) + 1
-    else:
-        next_id = existing_id
-
-    # Create log entry with all columns in correct order
-    log_entry = []
-    for column_key in config.LOG_COLUMNS:
-        if column_key == "ID":
-            log_entry.append(str(next_id))
-        else:
-            value = values.get(column_key, "")
-            log_entry.append(sanitize_log_entry(value))
-
-    # Update existing entry or append new one
-    if existing_entry:
-        for i, row in enumerate(rows):
-            if row and len(row) > 2 and row[2] == email:
-                rows[i] = log_entry
-                rows[i][-1] = str(int(rows[i][-1]) + 1)  # Increment counter
-                break
-    else:
-        rows.append(log_entry)
-
-    # Write to file with correct header
-    with open(LOG_FILE, mode="w", newline="") as file:
-        writer = csv.writer(file)
-        writer.writerow([col.name for col in config.LOG_COLUMNS.values()])  # Write header
-        writer.writerows(rows)  # Write data rows
+    
+    try:
+        db = Database(config)
+        db.log_check(data)
+    except Exception as e:
+        logger.error(f"Failed to log email check: {e}")
 
 def check_existing_log_for_domain(domain):
     """Check log.txt for a previous check for the domain and return a valid port if found."""
@@ -594,9 +549,27 @@ def validate_email(email):
         imap_status, imap_banner = check_imap_ssl(primary_mx)
         pop3_status, pop3_banner = check_pop3_ssl(primary_mx)
         
-        log_email_check(email, primary_mx, spf_status, dkim_status, smtp_result, used_port, domain,
-                        error_message, catch_all_email, disposable_status, smtp_vrfy_result, blacklist_info,
-                        mx_preferences, smtp_banner, mx_ip, imap_status, imap_banner, pop3_status, pop3_banner)
+        log_email_check(
+            email=email,
+            mx_record=primary_mx,
+            spf_status=spf_status,
+            dkim_status=dkim_status,
+            smtp_result=smtp_result,
+            port=used_port,
+            domain=domain,
+            error_message=error_message,
+            catch_all_email=catch_all_email,
+            disposable_status=disposable_status,
+            smtp_vrfy_result=smtp_vrfy_result,
+            blacklist_info=blacklist_info,
+            mx_preferences=mx_preferences,
+            smtp_banner=smtp_banner,
+            mx_ip=mx_ip,
+            imap_status=imap_status,
+            imap_banner=imap_banner,
+            pop3_status=pop3_status,
+            pop3_banner=pop3_banner
+        )
         return smtp_result
     except Exception as e:
         logger.error(f"Error validating {email}: {str(e)}", exc_info=True)
@@ -621,77 +594,64 @@ def load_selected_columns():
     
     return selected_columns
 
-# Update the show_log function to work with new column structure
-def show_log(file_path="log.txt"):
-    """Display log entries in a single table"""
+# Replace show_log function with:
+def show_log():
+    """Display log entries from encrypted database"""
     try:
-        with open(file_path, "r", newline='') as log_file:
-            reader = csv.reader(log_file)
-            header = next(reader, None)  # Original file headers (internal names)
-            data = list(reader)
+        columns, rows = db.show_logs()
+        if not rows:
+            print("No log entries found.\n")
+            return
 
-            if not data:
-                print("No log entries found.\n")
-                return
+        visible_columns = [
+            col for col in columns 
+            if col in config.LOG_COLUMNS 
+            and config.LOG_COLUMNS[col].show.upper() == 'Y'
+        ]
 
-            # Map internal names to display names for visible columns
-            visible_columns = [
-                (i, config.LOG_COLUMNS[col_name].display_name)
-                for i, col_name in enumerate(header)
-                if col_name in config.LOG_COLUMNS 
-                and config.LOG_COLUMNS[col_name].show.upper() == 'Y'
-            ]
+        visible_data = [
+            [row[columns.index(col)] for col in visible_columns]
+            for row in rows
+        ]
 
-            # Sort by index if needed
-            visible_columns.sort(key=lambda x: config.LOG_COLUMNS[header[x[0]]].index)
+        print(tabulate(
+            visible_data,
+            headers=[config.LOG_COLUMNS[col].display_name for col in visible_columns],
+            tablefmt="github",
+            numalign="left",
+            stralign="left"
+        ))
+        print()
 
-            # Extract visible columns and their data in the sorted order
-            indices = [idx for idx, _ in visible_columns]
-            headers = [display_name for _, display_name in visible_columns]
-            
-            # Reorder data according to sorted indices
-            table_data = [
-                [row[i] for i in indices]
-                for row in data
-            ]
-
-            # Display the table
-            print(tabulate(
-                table_data,
-                headers=headers,
-                tablefmt="github",
-                numalign="left",
-                stralign="left"
-            ))
-            print()
-
-    except FileNotFoundError:
-        print("Log file not found.\n")
     except Exception as e:
         logger.error(f"Error displaying log: {str(e)}")
-        print(f"Error reading log file: {e}\n")
+        print(f"Error reading log database: {e}\n")
  
 # --- Clear log---        
+# Replace clear_log function with:
 def clear_log():
-    """Clear the log file while preserving the header row."""
-    with open(LOG_FILE, mode="w", newline="") as file:
-        writer = csv.writer(file)
-        writer.writerow(LOG_HEADER)
-    print("Log cleared!")
-
-# --- Startup Message ---
-
-START_MESSAGE = (
-"======================================================================\n"
-    "Email Verification Script - Version 1.0\n"
-    "Copyright (C) 2025 Kim Skov Rasmussen\n"
-    "Licensed under GNU General Public License v3.0\n"  
-    "This software is provided as is, without any warranties.\n"  
-    "Use at your own risk. For educational purposes only.\n"
-    "\n"
-    "Type 'help' to view a list of commands and usage instructions.\n"
-"======================================================================\n"
-)
+    """Clear the email logs table and reset sequence counter with password verification"""
+    try:
+        # Prompt for password confirmation
+        password = getpass.getpass("\nPlease enter your password to confirm log deletion: ")
+        
+        # Create temporary database connection for verification
+        temp_db = Database(config)
+        if not temp_db._verify_password(password):
+            print("\nInvalid password. Log clearing cancelled.")
+            return
+            
+        # If password is correct, proceed with confirmation
+        confirmation = input("\nAre you sure you want to clear all email logs? This cannot be undone. (yes/no): ")
+        if confirmation.lower() == 'yes':
+            db.clear_email_logs()  # Clear email_logs table
+            db.reset_sequence('email_logs')  # Reset sequence counter
+            print("\nEmail logs cleared successfully!")
+        else:
+            print("\nLog clearing cancelled.")
+            
+    except Exception as e:
+        print(f"\nError clearing logs: {str(e)}")
 
 # --- Exit Message ---
 
@@ -705,8 +665,38 @@ EXIT_MESSAGE = (
 
 # --- Main Loop ---
 def main():
-    clear_screen()  # Clear the terminal window before displaying message
-    print(START_MESSAGE)  # Display your custom startup message
+    try:
+        global db
+        db = Database(config)
+        
+        # Clear screen and show welcome banner
+        clear_screen()
+        print("""\
+======================================================================
+Email Verification Script - Version 1.0
+Copyright (C) 2025 Kim Skov Rasmussen
+Licensed under GNU General Public License v3.0
+This software is provided as is, without any warranties.
+Use at your own risk. For educational purposes only.
+
+Please login to continue. Type 'help' for available commands.
+======================================================================
+""")
+        
+        # Get password from user only if not authenticated
+        if not db.is_authenticated:
+            password = getpass.getpass("Password> ")
+            
+            if not db.authenticate(password):
+                print("Authentication failed")
+                sys.exit(1)
+                
+            # Show welcome message with username
+            print(f"\nLogin successful! Welcome {db.current_user}\n")
+            
+    except Exception as e:
+        print(f"Database initialization error: {e}")
+        sys.exit(1)
 
     while True:
         user_input = input("Command> ").strip()
@@ -731,7 +721,7 @@ def main():
 
         elif user_input.lower() == "read more":
             # Construct the file path and open it in the browser
-            file_path = os.path.join(os.getcwd(), "documentation", "ReadMe.txt")
+            file_path = os.path.join(os.getcwd(), "documentation", "README.md")
             webbrowser.open(file_path)
             continue
             
@@ -742,6 +732,11 @@ def main():
         elif user_input.lower() == "clear":
             clear_screen()  # Clear the terminal window
             continue
+
+        elif user_input.lower() == "who am i":
+                print(f"Current user: {config.USER_CREDENTIALS.USER_NAME}")
+                print(f"User email: {config.USER_CREDENTIALS.USER_EMAIL}")            
+                continue
 
         # Split input by commas and remove empty spaces
         emails = [email.strip() for email in user_input.split(",") if email.strip()]
@@ -783,9 +778,7 @@ class SMTPConnectionPool:
                 smtp.quit()
 
 # Create global connection pool
-# Update SMTP connection pool size
 smtp_pool = SMTPConnectionPool(max_connections=config.CONNECTION_POOL_SIZE)
 
-SCRIPT_IDENTITY = {
-    'User-Agent': 'EmailVerificationScript/1.0 (https://github.com/yourusername/evs)',
-    'From': 'your@email.co'}
+# Initialize database connection (move this near the top with other initializations)
+db = None  # Will be initialized in main()

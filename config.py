@@ -1,7 +1,35 @@
-# config.py
+# config.py is a configuration file that contains settings and metadata for the script.
+
+import os
+import secrets
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Tuple, Optional
+
+@dataclass
+class UserCredentials:
+    USER_NAME: str = None
+    USER_EMAIL: str = None
+
+    def __post_init__(self):
+        """Load credentials from database after initialization"""
+        from database import Database
+        try:
+            db = Database(self)
+            users = db.get_users()
+            if users and len(users) > 0:
+                # Use the first user's credentials
+                self.USER_NAME = users[0][1]  # index 1 is name
+                self.USER_EMAIL = users[0][3]  # index 3 is email
+            else:
+                # Fallback defaults if no users found
+                self.USER_NAME = 'your_username'
+                self.USER_EMAIL = 'your@email.com'
+        except Exception as e:
+            print(f"Warning: Could not load user credentials: {e}")
+            # Set fallback values
+            self.USER_NAME = 'your_username'
+            self.USER_EMAIL = 'your@email.com'
 
 class cat(Enum):
     """Short names for column categories"""
@@ -27,6 +55,9 @@ class LogColumn:
 @dataclass
 class Config:
     """Main configuration class"""
+    # User credentials
+    USER_CREDENTIALS: UserCredentials = field(default_factory=UserCredentials)
+
     # Rate Limiter Settings
     RATE_LIMIT_REQUESTS: int = 10
     RATE_LIMIT_WINDOW: int = 60
@@ -52,7 +83,7 @@ class Config:
             # Core Info - Basic information about the email check
             "ID": LogColumn(
                 name="ID",                    # Don't change this
-                display_name="No.",           # Change this to customize how ID appears
+                display_name="#",           # Change this to customize how ID appears
                 category=cat.META, 
                 index=0,
                 show='Y'                      # Y to show, N to hide
@@ -224,14 +255,6 @@ class Config:
         }
     )
 
-    # Script Identity
-    SCRIPT_IDENTITY: Dict[str, str] = field(
-        default_factory=lambda: {
-            'User-Agent': 'EmailVerificationScript/1.0 (https://github.com/yourusername/evs)',
-            'From': 'your@email.com'
-        }
-    )
-
     # Disposable Email Domains
     DISPOSABLE_DOMAINS: List[str] = field(
         default_factory=lambda: [
@@ -246,6 +269,16 @@ class Config:
             "tempinbox.com"
         ]
     )
+
+    # User-Agent String
+    USER_AGENT: str = 'EmailVerificationScript/1.0 (https://github.com/Ranrar/EVS)'
+
+    # Add database configuration
+    DATABASE_KEY = os.getenv('EVS_DB_KEY') or secrets.token_hex(32)
+
+    # Database settings
+    DB_PATH = 'email_verification.db'
+    KEY_FILE = 'db.key'
 
     def get_visible_columns(self) -> Dict[str, LogColumn]:
         """Get only the visible columns"""
