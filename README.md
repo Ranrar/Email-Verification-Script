@@ -122,7 +122,6 @@ including:
 The script supports several commands:
 
 - 'help'      - Display help message
-- 'log help'  - Display detailed information about the logging system
 - 'show log'  - Display verification history from the database
 - 'clear log' - Delete all content from the log database
 - 'clear'     - Clear the terminal window
