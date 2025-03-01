@@ -1,6 +1,4 @@
-======================================================================
-                  Python Email Verification Script
-======================================================================
+# Python Email Verification Script
 
 This Python-based email verification script is designed to help you 
 validate email addresses by analyzing various technical aspects of 
@@ -17,9 +15,7 @@ is actively in use, especially for critical applications. To ensure
 higher accuracy, it's recommended to use this tool alongside other 
 verification methods.
 
-======================================================================
-                         Key Features and Functions
-======================================================================
+## Key Features and Functions
 
 1. Email Format Validation:
    The script first checks whether the email address adheres to a 
@@ -74,9 +70,7 @@ verification methods.
    - This database can be accessed and viewed from within the application
      using the 'show log' command.
 
-======================================================================
-                         What to Expect
-======================================================================
+## What to Expect
 
 1. Accuracy Limitations:
    - No Guarantees: The accuracy of email verification is never 100%. 
@@ -95,9 +89,7 @@ verification methods.
      does not guarantee real-time accuracy. It's recommended to verify 
      email addresses through multiple sources for precise accuracy.
 
-======================================================================
-                         Use Cases for Internal Use
-======================================================================
+## Use Cases for Internal Use
 
 This email verification tool can be used internally for various purposes, 
 including:
@@ -125,9 +117,7 @@ including:
      systems and ensuring compliance with certain regulations or internal 
      standards.
 
-======================================================================
-                         Command Reference
-======================================================================
+## Command Reference
 
 The script supports several commands:
 
@@ -142,5 +132,3 @@ The script supports several commands:
 
 You can also enter one or more email addresses separated by commas to check their validity.
 For example: test@example.com, user@domain.com
-
-======================================================================
