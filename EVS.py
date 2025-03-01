@@ -17,18 +17,17 @@
 
 import sys
 import subprocess
-from functools import wraps
 import time
-from collections import deque
-from contextlib import contextmanager
 import queue
 import logging
+import getpass
+from collections import deque
+from contextlib import contextmanager
 from config import Config
 from datetime import datetime, timedelta
 from functools import wraps
-from cryptography.fernet import Fernet
 from database import Database
-import getpass
+from tabulate import tabulate
 
 def ttl_cache(maxsize=128, ttl=600):
     """Time-based cache decorator with maximum size limit"""
@@ -119,7 +118,7 @@ from typing import Optional, List
 
 # Configure logging
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler('program.log'),
@@ -127,9 +126,6 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
-
-# Name of the log file
-LOG_FILE = "log.txt"
 
 # Update LOG_HEADER definition
 LOG_HEADER = ["ID"] + [
@@ -161,49 +157,20 @@ def display_help():
         "\n"
         "Usage:\n"
         "----------------------------------------------------------------------\n"
-        "  - Enter one or more email addresses separated by commas to check their validity.\n"
-        "  - For example: test@example.com, user@domain.com\n"
+        "  • Enter one or more email addresses separated by commas to check their validity.\n"
+        "  • For example: test@example.com, user@domain.com\n"
         "\n"
-        "Or Type:\n"
-        "\n"
-        "  - 'help' to display this help message.\n"
-        "  - 'exit' to quit the program.\n"
-        "  - 'show log' to display a simple list of logged emails and their validation status.\n"    
-        "  - 'clear log' Delete all content from the log file.\n"    
-        "  - 'log help' to display how the log works\n"
-        "  - 'read more' to learn more about: Key Features and Functions, What to Expect and Use Cases\n"
-        "  - 'clear' to clear the terminal window\n"        
-        "\n"
+        "AVAILABLE COMMANDS:\n"
+        "----------------------------------------------------------------------\n"
+        "  • 'help'      - Display this help message\n"
+        "  • 'show log'  - Display a list of logged emails and their validation status\n"
+        "  • 'clear log' - Delete all content from the log database\n"
+        "  • 'clear'     - Clear the terminal window\n"
+        "  • 'read more' - Learn more about features, functions, and use cases\n"
+        "  • 'who am i'  - Display current user information\n"
+        "  • 'exit'      - Quit the program\n"
     )
     print(help_command)
-    
-# Replace the display_log_help function to remove INI file references
-def display_log_help():
-    """Display custom help text."""
-    help_log = ( 
-        "\n"
-        "Log file details:\n"
-        "----------------------------------------------------------------------\n"
-        "  - All email validation checks are logged to `log.txt`.\n"
-        "  - Each log entry is in CSV format and includes details such as:\n"
-        "    • Timestamp of the check\n"
-        "    • Email address and associated domain\n"
-        "    • MX record and the port used for verification\n"
-        "    • Disposable email status, SPF and DKIM results\n"
-        "    • SMTP and VRFY outcomes, catch-all detection, and blacklist info\n"
-        "    • Additional technical details like SMTP banner, MX IP, and IMAP/POP3 status\n"
-        "  - Reviewing this file can help diagnose issues and confirm the results of the validation process.\n"
-        "\n"
-        "Log Display Categories:\n"
-        "\n"
-        "  Core Information: Essential data about the email check\n"
-        "  Security Checks: Security-related verification results\n"
-        "  Technical Details: Detailed technical information\n"
-        "  Protocol Status: Email protocol support information\n"
-        "  Metadata: Timestamp and counter information\n"
-        "\n"
-    )
-    print(help_log)
 
 # --- Disposable and Blacklist Detection ---
 
@@ -230,7 +197,7 @@ def get_mx_record(domain: str) -> Optional[List[dns.resolver.Answer]]:
         answers = dns.resolver.resolve(domain, 'MX', lifetime=10)
         return sorted(answers, key=lambda x: x.preference)
     except Exception as e:
-        logger.error(f"DNS resolution error for {domain}: {e}")
+        (f"DNS resolution error for {domain}: {e}")
         return None
 
 def check_spf(domain):
@@ -379,27 +346,12 @@ def check_server_policies(domain: str) -> bool:
     pass
 
 # --- Logging Functions ---
-# Log Order:
-# Timestamp, Email Address, Domain, MX Record, Used Port, Disposable Email, SPF Status, DKIM Status,
-# Catch-all Email, SMTP Result, SMTP VRFY Result, Blacklist Info, MX Preferences, SMTP Banner, MX IP,
-# Error Message
 
-def sanitize_log_entry(value):
-    """Sanitize log entry to prevent CSV injection and remove problematic characters"""
-    if value is None:
-        return ""
-    
-    # Convert to string and clean up
-    value = str(value)
-    value = value.replace('\n', ' ').replace('\r', ' ')
-    value = value.replace(',', ';')  # Replace commas with semicolons
-    value = re.sub(r'\s+', ' ', value)  # Replace multiple spaces with single space
-    return value.strip()
 
 def log_email_check(email, mx_record, spf_status, dkim_status, smtp_result, port, domain, **kwargs):
     """Log email verification results to database"""
     data = {
-        'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        'timestamp': datetime.now().strftime("%d-%m-%y %H:%M"),
         'email': email,
         'domain': domain,
         'result': smtp_result,
@@ -422,32 +374,17 @@ def log_email_check(email, mx_record, spf_status, dkim_status, smtp_result, port
         'pop3_banner': kwargs.get('pop3_banner', '')
     }
     
+    # Basic cleanup for display purposes
+    for key, value in data.items():
+        if isinstance(value, str):
+            # Remove newlines and extra spaces for display readability
+            data[key] = ' '.join(value.split())
+    
     try:
         db = Database(config)
         db.log_check(data)
     except Exception as e:
         logger.error(f"Failed to log email check: {e}")
-
-def check_existing_log_for_domain(domain):
-    """Check log.txt for a previous check for the domain and return a valid port if found."""
-    if not os.path.isfile(LOG_FILE):
-        return None
-    with open(LOG_FILE, mode="r", newline="") as file:
-        reader = csv.reader(file)
-        try:
-            next(reader)  # Skip header row
-        except StopIteration:
-            return None
-        for row in reader:
-            if len(row) >= 8:
-                try:
-                    if row[3].strip().lower() == domain.strip().lower():
-                        port_value = row[5].strip()
-                        if port_value and port_value.upper() != "N/A":
-                            return port_value
-                except IndexError:
-                    continue
-    return None
 
 # --- Email Validation Functions ---
 
@@ -463,7 +400,7 @@ def check_smtp_with_port(domain, email, port):
 
 def validate_email(email):
     """Enhanced email validation with logging"""
-    logger.info(f"Starting validation for email: {email}")
+    logger.debug(f"Starting validation for email: {email}")
     try:
         if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
             log_email_check(email, "Invalid Format", "N/A", "N/A", "Invalid Email Format",
@@ -480,32 +417,6 @@ def validate_email(email):
         smtp_banner = ""
         mx_ip = ""
         
-        # Check for cached valid port
-        existing_port = check_existing_log_for_domain(domain)
-        if existing_port:
-            print(f"Using cached port {existing_port} for domain {domain}.")
-            smtp_result = check_smtp_with_port(domain, email, int(existing_port))
-            code, vrfy_msg = smtp_vrfy(str(get_mx_record(domain)[0].exchange).rstrip('.'),
-                                    int(existing_port), email)
-            smtp_vrfy_result = "Verified" if code == 250 else "Not Verified"
-            if smtp_result == "Email likely exists":
-                fake_email = f"nonexistent{int(time.time())}@{domain}"
-                if test_smtp_connection(str(get_mx_record(domain)[0].exchange).rstrip('.'),
-                                        int(existing_port), fake_email):
-                    smtp_result = "Email likely exists"
-                    catch_all_email = fake_email
-                    print(f"Catch-all detected: {fake_email} (email likely exists)")
-            mx_preferences = ", ".join([str(mx.preference) for mx in get_mx_record(domain)])
-            smtp_banner = get_smtp_banner(str(get_mx_record(domain)[0].exchange).rstrip('.'))
-            mx_ip = get_mx_ip(str(get_mx_record(domain)[0].exchange).rstrip('.'))
-            
-            log_email_check(email, "MX Found", check_spf(domain), check_dkim(domain),
-                            smtp_result, existing_port, domain, error_message="",
-                            catch_all_email=catch_all_email, disposable_status=disposable_status,
-                            smtp_vrfy_result=smtp_vrfy_result, blacklist_info=blacklist_info,
-                            mx_preferences=mx_preferences, smtp_banner=smtp_banner, mx_ip=mx_ip)
-            return smtp_result
-
         print(f"Checking MX records for {domain}...")
         mx_records = get_mx_record(domain)
         if not mx_records:
@@ -588,171 +499,161 @@ def load_selected_columns():
     """Load column display settings from config"""
     selected_columns = {}
     
-    for column_name, column in config.LOG_COLUMNS.items():
-        if column.show:
-            selected_columns[column.name] = column.index
+    # Get visible columns directly using the helper method
+    visible_columns = config.get_visible_columns()
+    
+    # Use the original column keys, not the name attribute
+    for key, column in visible_columns.items():
+        selected_columns[key] = column.index
     
     return selected_columns
 
-# Replace show_log function with:
-def show_log():
-    """Display log entries from encrypted database"""
+def display_logs():
+    """Display all email verification logs"""
     try:
-        columns, rows = db.show_logs()
+        global db
+        
+        # Get columns to display from config
+        selected_columns = load_selected_columns()
+        
+        # Simple database connection without authentication
+        logger.debug("Initializing new database connection for log display")
+        db = Database(config)
+            
+        # Pass the selected columns to show_logs
+        logger.debug("Fetching logs from database")
+        columns, rows = db.show_logs(selected_columns)
+        
         if not rows:
-            print("No log entries found.\n")
+            print("\nNo log entries found.")
             return
-
-        visible_columns = [
-            col for col in columns 
-            if col in config.LOG_COLUMNS 
-            and config.LOG_COLUMNS[col].show.upper() == 'Y'
-        ]
-
-        visible_data = [
-            [row[columns.index(col)] for col in visible_columns]
-            for row in rows
-        ]
-
+        
+        # Display formatted data
+        print("\nEmail Verification Logs:")
         print(tabulate(
-            visible_data,
-            headers=[config.LOG_COLUMNS[col].display_name for col in visible_columns],
-            tablefmt="github",
-            numalign="left",
-            stralign="left"
+            rows,
+            headers=columns,
+            tablefmt='grid',
+            numalign='left',
+            stralign='left'
         ))
         print()
-
+        
     except Exception as e:
-        logger.error(f"Error displaying log: {str(e)}")
-        print(f"Error reading log database: {e}\n")
- 
+        logger.error(f"Error displaying log: {e}")
+        print(f"Error reading log database: {e}")
+
 # --- Clear log---        
 # Replace clear_log function with:
 def clear_log():
-    """Clear the email logs table and reset sequence counter with password verification"""
+    """Clear the email logs table and reset sequence counter"""
     try:
-        # Prompt for password confirmation
-        password = getpass.getpass("\nPlease enter your password to confirm log deletion: ")
-        
-        # Create temporary database connection for verification
-        temp_db = Database(config)
-        if not temp_db._verify_password(password):
-            print("\nInvalid password. Log clearing cancelled.")
-            return
-            
-        # If password is correct, proceed with confirmation
+        # Simple confirmation without password verification
         confirmation = input("\nAre you sure you want to clear all email logs? This cannot be undone. (yes/no): ")
+        
         if confirmation.lower() == 'yes':
-            db.clear_email_logs()  # Clear email_logs table
-            db.reset_sequence('email_logs')  # Reset sequence counter
-            print("\nEmail logs cleared successfully!")
+            db.clear_logs()
+            print("\nAll logs have been cleared successfully.")
         else:
             print("\nLog clearing cancelled.")
             
     except Exception as e:
-        print(f"\nError clearing logs: {str(e)}")
+        logger.error(f"Error clearing logs: {e}")
+        print(f"Error clearing logs: {e}")
 
-# --- Exit Message ---
-
-EXIT_MESSAGE = (
-"======================================================================\n"
-    "Email Verification Script has exited.\n"
-    "Thank you for using this tool.\n"  
-    "Remember: This software is provided as is under GNU GPL v3.\n"
-"======================================================================\n"
-)
+def toggle_column(column_name):
+    """Toggle visibility of a specific column"""
+    if config.toggle_column_visibility(column_name):
+        print(f"Column '{column_name}' visibility toggled successfully.")
+        # Show current visibility
+        visible = config.LOG_COLUMNS[column_name].show == 'Y'
+        status = "visible" if visible else "hidden"
+        print(f"Column '{column_name}' is now {status}.")
+    else:
+        print(f"Column '{column_name}' not found.")
 
 # --- Main Loop ---
 def main():
+    """Main entry point"""
     try:
         global db
         db = Database(config)
         
+        # Define welcome banner
+        WELCOME_BANNER = (
+            "======================================================================\n"
+            "Welcome to the Email Verification Script!\n"
+            "Type 'help' to see available commands.\n"
+            "======================================================================\n"
+        )
+        
         # Clear screen and show welcome banner
         clear_screen()
-        print("""\
-======================================================================
-Email Verification Script - Version 1.0
-Copyright (C) 2025 Kim Skov Rasmussen
-Licensed under GNU General Public License v3.0
-This software is provided as is, without any warranties.
-Use at your own risk. For educational purposes only.
-
-Please login to continue. Type 'help' for available commands.
-======================================================================
-""")
-        
-        # Get password from user only if not authenticated
-        if not db.is_authenticated:
-            password = getpass.getpass("Password> ")
-            
-            if not db.authenticate(password):
-                print("Authentication failed")
-                sys.exit(1)
+        print(WELCOME_BANNER)
+               
+        # Main command loop
+        while True:
+            try:
+                user_input = input("\nCommand> ").strip()
+                if not user_input:
+                    continue
                 
-            # Show welcome message with username
-            print(f"\nLogin successful! Welcome {db.current_user}\n")
-            
+                # Handle special commands first
+                if user_input.lower() == "exit":
+                    clear_screen()
+                    print("Exiting program.")
+                    break
+
+                elif user_input.lower() == "help":
+                    display_help()
+                    continue
+
+                elif user_input.lower() == "show log":
+                    display_logs()
+                    continue
+
+                elif user_input.lower() == "read more":
+                    # Construct the file path and open it in the browser
+                    file_path = os.path.join(os.getcwd(), "README.md")
+                    webbrowser.open(file_path)
+                    continue
+                    
+                elif user_input.lower() == "clear log":
+                    clear_log()
+                    continue
+                    
+                elif user_input.lower() == "clear":
+                    clear_screen()
+                    continue
+
+                elif user_input.lower() == "who am i":
+                    print(f"Current user: {config.USER_CREDENTIALS.USER_NAME}")
+                    print(f"User email: {config.USER_CREDENTIALS.USER_EMAIL}")            
+                    continue
+
+                # Split input by commas and remove empty spaces
+                emails = [email.strip() for email in user_input.split(",") if email.strip()]
+
+                # Check if the input contains valid email(s)
+                if all(re.match(r"[^@]+@[^@]+\.[^@]+", email) for email in emails):  
+                    results = validate_emails(emails)
+                    for email, result in zip(emails, results):
+                        print(f"{email}: {result}\n")
+                    continue  # Skip "Unknown command" check
+
+                # If input is neither a known command nor a valid email, show an error
+                print("Unknown command. Type 'help' for available commands.")
+                    
+            except KeyboardInterrupt:
+                print("\nUse 'exit' to quit.")
+            except Exception as e:
+                logger.error(f"Command error: {e}")
+                print(f"Error: {e}")
+    
     except Exception as e:
-        print(f"Database initialization error: {e}")
-        sys.exit(1)
-
-    while True:
-        user_input = input("Command> ").strip()
-
-        # Handle special commands first
-        if user_input.lower() == "exit":
-            clear_screen()
-            print(EXIT_MESSAGE)  # Display exit message
-            break
-
-        elif user_input.lower() == "help":
-            display_help()  # Call the function to display help
-            continue
-            
-        elif user_input.lower() == "log help":
-            display_log_help()  # Call the function to display log help
-            continue
-
-        elif user_input.lower() == "show log":
-            show_log()  # Calls the function to display log summary
-            continue
-
-        elif user_input.lower() == "read more":
-            # Construct the file path and open it in the browser
-            file_path = os.path.join(os.getcwd(), "documentation", "README.md")
-            webbrowser.open(file_path)
-            continue
-            
-        elif user_input.lower() == "clear log":
-            clear_log()  # Calls the function to clear log.txt
-            continue
-            
-        elif user_input.lower() == "clear":
-            clear_screen()  # Clear the terminal window
-            continue
-
-        elif user_input.lower() == "who am i":
-                print(f"Current user: {config.USER_CREDENTIALS.USER_NAME}")
-                print(f"User email: {config.USER_CREDENTIALS.USER_EMAIL}")            
-                continue
-
-        # Split input by commas and remove empty spaces
-        emails = [email.strip() for email in user_input.split(",") if email.strip()]
-
-        # Check if the input contains valid email(s)
-        if any("@" in email and "." in email for email in emails):  
-            results = validate_emails(emails)
-            for email, result in zip(emails, results):
-                print(f"{email}: {result}\n")
-            continue  # Skip "Unknown command" check
-
-        # If input is neither a known command nor a valid email, show an error
-        print("Unknown command. Type 'help' for available commands.")
-
-if __name__ == "__main__":
-    main()
+        logger.error(f"Application error: {e}")
+        print(f"Fatal error: {e}")
+    
 
 class SMTPConnectionPool:
     """SMTP Connection Pool"""
@@ -782,3 +683,6 @@ smtp_pool = SMTPConnectionPool(max_connections=config.CONNECTION_POOL_SIZE)
 
 # Initialize database connection (move this near the top with other initializations)
 db = None  # Will be initialized in main()
+
+if __name__ == "__main__":
+    main()

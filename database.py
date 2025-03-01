@@ -1,13 +1,20 @@
 import sqlite3
 import os
-import getpass
-from cryptography.fernet import Fernet
 import sys
 from datetime import datetime
 import logging
+import json
+from typing import Any, Dict, List, Union
 
-# Configure logger
-logging.basicConfig(level=logging.ERROR)
+# Configure logger with more detailed logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('database.log'),
+        logging.StreamHandler()
+    ]
+)
 logger = logging.getLogger(__name__)
 
 def clear_screen():
@@ -15,43 +22,41 @@ def clear_screen():
     os.system('cls' if os.name == 'nt' else 'clear')
 
 class Database:
+    # Class-level variables for singleton pattern
     _instance = None
+    _initialized = False
     
-    def __new__(cls, config):
+    def __new__(cls, config=None):
         if cls._instance is None:
             cls._instance = super(Database, cls).__new__(cls)
             cls._instance._initialized = False
         return cls._instance
 
-    def __init__(self, config):
+    def __init__(self, config=None):
+        """Initialize database with optional config"""
         if self._initialized:
             return
             
+        # Basic attributes
         self.db_dir = os.path.join(os.getcwd(), 'DB')
         self.db_path = os.path.join(self.db_dir, 'EVS.db')
-        self.key_file = os.path.join(self.db_dir, 'db.key')
         self.config = config
-        self.is_authenticated = False
-        self.first_run = False
         self.current_user = None
-        self.password = None
         
-        # Create DB directory if it doesn't exist
+        # Create DB directory if needed
         if not os.path.exists(self.db_dir):
             os.makedirs(self.db_dir)
-            
-        # Check if database exists
-        if not os.path.exists(self.db_path):
-            self.first_run = True
+        
+        # Set first run flag
+        self.first_run = not os.path.exists(self.db_path)
+        
+        if self.first_run:
             self._initialize_new_database()
-        else:
-            # Don't load key here - wait for authenticate call
-            self.is_authenticated = False
-            
+        
         self._initialized = True
 
     def _initialize_new_database(self):
-        """Initialize a new database with user information first, then create with password"""
+        """Initialize a new database with user information"""
         print(""
 "======================================================================\n"
     "Email Verification Script - Version 1.0\n"
@@ -71,7 +76,7 @@ class Database:
                 break
             print("Name cannot be empty.")
         
-        alias = input("Alias (optional): ").strip() or None
+        # Removed alias input
         
         while True:
             email = input("Email: ").strip()
@@ -79,34 +84,12 @@ class Database:
                 break
             print("Please enter a valid email address.")
 
-        # Only after getting user info, create database with password
-        if not os.path.exists(self.db_dir):
-            os.makedirs(self.db_dir)
-
-        print("\nCreate a password to protect your database:")
-        while True:
-            password = getpass.getpass("Database password: ")
-            confirm = getpass.getpass("Confirm password: ")
-            if password == confirm:
-                break
-            print("Passwords don't match. Please try again.")
-
         try:
-            # Generate encryption key and create a key+password combination
-            self.key = Fernet.generate_key()
-            self.fernet = Fernet(self.key)
-            
-            # Store both key and encrypted password
-            with open(self.key_file, 'wb') as f:
-                encrypted_password = self.fernet.encrypt(password.encode())
-                f.write(self.key + b":" + encrypted_password)
-
             # Initialize database structure
-            self.password = password  # Store password for database encryption
             self.init_database()
             
-            # Add initial user
-            self.add_user(name, email, alias)
+            # Add initial user with no alias
+            self.add_user(name, email)
             print("\nDatabase and user profile created successfully!\n")
             
         except Exception as e:
@@ -114,70 +97,11 @@ class Database:
             # Clean up if anything fails
             if os.path.exists(self.db_path):
                 os.remove(self.db_path)
-            if os.path.exists(self.key_file):
-                os.remove(self.key_file)
-
-    def _load_encryption_key(self):
-        """Load existing encryption key with password verification"""
-        clear_screen()
-        print(""
-"======================================================================\n"
-    "Email Verification Script - Version 1.0\n"
-    "Copyright (C) 2025 Kim Skov Rasmussen\n"
-    "Licensed under GNU General Public License v3.0\n"  
-    "This software is provided as is, without any warranties.\n"  
-    "Use at your own risk. For educational purposes only.\n"
-    "\n"
-    "To get started, please login. Type 'help' to see all commands\n"
-"======================================================================\n"
-"")
-    
-        password = getpass.getpass("Password> ")
-        
-        try:
-            # Read the stored key and encrypted password
-            with open(self.key_file, 'rb') as f:
-                stored_data = f.read()
-            
-            # Split the stored data into key and encrypted password
-            key, encrypted_password = stored_data.split(b":")
-            
-            # Initialize Fernet with the stored key
-            self.key = key
-            self.fernet = Fernet(self.key)
-            
-            try:
-                # Verify password
-                decrypted_password = self.fernet.decrypt(encrypted_password)
-                if decrypted_password.decode() != password:
-                    raise ValueError("Invalid password")
-                self.password = password  # Store password for database encryption
-            except Exception:
-                raise ValueError("Invalid password")
-                    
-        except Exception as e:
-            print(f"Error accessing database: {str(e)}")
-            sys.exit(1)
-
-    def _check_auth(self):
-        """Check if database is authenticated"""
-        # Remove the _load_encryption_key call since authentication is handled elsewhere
-        if not self.is_authenticated:
-            raise ValueError("Database not authenticated")
-
-    def encrypt(self, data):
-        """Encrypt string data"""
-        return self.fernet.encrypt(data.encode()).decode()
-
-    def decrypt(self, data):
-        """Decrypt string data"""
-        return self.fernet.decrypt(data.encode()).decode()
 
     def init_database(self):
-        """Initialize the database with full encryption"""
+        """Initialize the database"""
         try:
             with sqlite3.connect(self.db_path) as conn:
-                conn.execute(f"PRAGMA key='{self.password}'")  # Set database encryption key
                 # Create email_logs table
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS email_logs (
@@ -206,12 +130,11 @@ class Database:
                     )
                 """)
                 
-                # Create user_info table
+                # Create user_info table without alias column
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS user_info (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         name TEXT NOT NULL,
-                        alias TEXT,
                         email TEXT NOT NULL,
                         created_at TEXT NOT NULL
                     )
@@ -221,136 +144,210 @@ class Database:
             raise Exception(f"Failed to initialize database: {str(e)}")
 
     def log_check(self, data):
-        """Log an email check with encryption"""
-        self._check_auth()
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute(f"PRAGMA key='{self.password}'")  # Set database encryption key
-            cursor = conn.cursor()
-            
-            # Encrypt sensitive data
-            encrypted_data = {
-                'email': self.encrypt(data['email']),
-                'domain': self.encrypt(data['domain']),
-                'mx_record': self.encrypt(data.get('mx_record', '')),
-                'smtp_banner': self.encrypt(data.get('smtp_banner', '')),
-                'error_message': self.encrypt(data.get('error_message', '')),
-                'imap_info': self.encrypt(data.get('imap_info', '')),
-                'pop3_info': self.encrypt(data.get('pop3_info', ''))
-            }
-            
-            # Check if email exists
-            cursor.execute(
-                "SELECT id, check_count FROM email_logs WHERE email = ?", 
-                (encrypted_data['email'],)
-            )
-            existing = cursor.fetchone()
+        """Log an email check with counter for duplicates"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # Ensure email is a string and properly formatted
+                email = str(data.get('email', '')).strip()
+                
+                # Check if this email already exists
+                cursor.execute("SELECT id, check_count FROM email_logs WHERE email = ?", (email,))
+                existing = cursor.fetchone()
+                
+                if existing:
+                    # Email exists - update record and increment counter
+                    record_id, current_count = existing
+                    new_count = current_count + 1
+                    
+                    cursor.execute("""
+                        UPDATE email_logs SET
+                        timestamp = ?,
+                        domain = ?,
+                        result = ?,
+                        error_message = ?,
+                        disposable = ?,
+                        spf_status = ?,
+                        dkim_status = ?,
+                        blacklist_info = ?,
+                        mx_record = ?,
+                        port = ?,
+                        mx_ip = ?,
+                        mx_preferences = ?,
+                        smtp_banner = ?,
+                        smtp_vrfy = ?,
+                        catch_all = ?,
+                        imap_status = ?,
+                        imap_info = ?,
+                        pop3_status = ?,
+                        pop3_info = ?,
+                        check_count = ?
+                        WHERE id = ?
+                    """, (
+                        data.get('timestamp', datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+                        str(data.get('domain', '')),
+                        data.get('result', ''),
+                        str(data.get('error_message', '')),
+                        data.get('disposable', ''),
+                        data.get('spf_status', ''),
+                        data.get('dkim_status', ''),
+                        data.get('blacklist_info', ''),
+                        str(data.get('mx_record', '')),
+                        data.get('port', ''),
+                        data.get('mx_ip', ''),
+                        data.get('mx_preferences', ''),
+                        str(data.get('smtp_banner', '')),
+                        data.get('smtp_vrfy', ''),
+                        data.get('catch_all', ''),
+                        data.get('imap_status', ''),
+                        str(data.get('imap_info', '')),
+                        data.get('pop3_status', ''),
+                        str(data.get('pop3_info', '')),
+                        new_count,
+                        record_id
+                    ))
+                else:
+                    # New email - insert with check_count = 1
+                    cursor.execute("""
+                        INSERT INTO email_logs (
+                            timestamp, email, domain, result, error_message,
+                            disposable, spf_status, dkim_status, blacklist_info,
+                            mx_record, port, mx_ip, mx_preferences, smtp_banner,
+                            smtp_vrfy, catch_all, imap_status, imap_info,
+                            pop3_status, pop3_info, check_count
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        data.get('timestamp', datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+                        email,
+                        str(data.get('domain', '')),
+                        data.get('result', ''),
+                        str(data.get('error_message', '')),
+                        data.get('disposable', ''),
+                        data.get('spf_status', ''),
+                        data.get('dkim_status', ''),
+                        data.get('blacklist_info', ''),
+                        str(data.get('mx_record', '')),
+                        data.get('port', ''),
+                        data.get('mx_ip', ''),
+                        data.get('mx_preferences', ''),
+                        str(data.get('smtp_banner', '')),
+                        data.get('smtp_vrfy', ''),
+                        data.get('catch_all', ''),
+                        data.get('imap_status', ''),
+                        str(data.get('imap_info', '')),
+                        data.get('pop3_status', ''),
+                        str(data.get('pop3_info', '')),
+                        1  # Initial check count
+                    ))
+                conn.commit()
+                
+        except Exception as e:
+            logger.error(f"Error in log_check: {e}")
+            raise
 
-            if existing:
-                # Update existing record
-                conn.execute("""
-                    UPDATE email_logs 
-                    SET timestamp=?, mx_record=?, result=?, error_message=?,
-                        disposable=?, spf_status=?, dkim_status=?, blacklist_info=?,
-                        port=?, mx_ip=?, mx_preferences=?, smtp_banner=?,
-                        smtp_vrfy=?, catch_all=?, imap_status=?, imap_info=?,
-                        pop3_status=?, pop3_info=?, check_count=?
-                    WHERE id=?
-                """, (
-                    data['timestamp'],
-                    encrypted_data['mx_record'],
-                    data.get('result', ''),
-                    encrypted_data['error_message'],
-                    data.get('disposable', ''),
-                    data.get('spf_status', ''),
-                    data.get('dkim_status', ''),
-                    data.get('blacklist_info', ''),
-                    data.get('port', ''),
-                    data.get('mx_ip', ''),
-                    data.get('mx_preferences', ''),
-                    encrypted_data['smtp_banner'],
-                    data.get('smtp_vrfy', ''),
-                    data.get('catch_all', ''),
-                    data.get('imap_status', ''),
-                    encrypted_data['imap_info'],
-                    data.get('pop3_status', ''),
-                    encrypted_data['pop3_info'],
-                    existing[1] + 1,
-                    existing[0]
-                ))
-            else:
-                # Insert new record
-                conn.execute("""
-                    INSERT INTO email_logs (
-                        timestamp, email, domain, result, error_message,
-                        disposable, spf_status, dkim_status, blacklist_info,
-                        mx_record, port, mx_ip, mx_preferences, smtp_banner,
-                        smtp_vrfy, catch_all, imap_status, imap_info,
-                        pop3_status, pop3_info, check_count
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
-                """, (
-                    data['timestamp'],
-                    encrypted_data['email'],
-                    encrypted_data['domain'],
-                    data.get('result', ''),
-                    encrypted_data['error_message'],
-                    data.get('disposable', ''),
-                    data.get('spf_status', ''),
-                    data.get('dkim_status', ''),
-                    data.get('blacklist_info', ''),
-                    encrypted_data['mx_record'],
-                    data.get('port', ''),
-                    data.get('mx_ip', ''),
-                    data.get('mx_preferences', ''),
-                    encrypted_data['smtp_banner'],
-                    data.get('smtp_vrfy', ''),
-                    data.get('catch_all', ''),
-                    data.get('imap_status', ''),
-                    encrypted_data['imap_info'],
-                    data.get('pop3_status', ''),
-                    encrypted_data['pop3_info']
-                ))
-            conn.commit()
-
-    def show_logs(self):
-        """Retrieve and decrypt logs"""
-        self._check_auth()
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute(f"PRAGMA key='{self.password}'")  # Set database encryption key
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM email_logs ORDER BY timestamp DESC")
-            columns = [description[0] for description in cursor.description]
-            rows = cursor.fetchall()
-            
-            # Decrypt sensitive data
-            decrypted_rows = []
-            for row in rows:
-                decrypted_row = list(row)
-                # Decrypt sensitive fields
-                decrypted_row[2] = self.decrypt(row[2])    # email
-                decrypted_row[3] = self.decrypt(row[3])    # domain
-                decrypted_row[5] = self.decrypt(row[5])    # error_message
-                decrypted_row[10] = self.decrypt(row[10])  # mx_record
-                decrypted_row[14] = self.decrypt(row[14])  # smtp_banner
-                decrypted_row[18] = self.decrypt(row[18])  # imap_info
-                decrypted_row[20] = self.decrypt(row[20])  # pop3_info
-                decrypted_rows.append(decrypted_row)
-            
-            return columns, decrypted_rows
+    def show_logs(self, selected_columns=None, limit=None):
+        """Retrieve logs with proper column filtering"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # Map column names to database field names
+                column_mapping = {
+                    "ID": "id",
+                    "Time": "timestamp",
+                    "Email": "email",
+                    "Domain": "domain", 
+                    "Result": "result",
+                    "Error": "error_message",
+                    "Disposable": "disposable",
+                    "SPF": "spf_status",
+                    "DKIM": "dkim_status",
+                    "Blacklist": "blacklist_info",
+                    "MX": "mx_record",
+                    "Port": "port",
+                    "IP": "mx_ip",
+                    "MXPref": "mx_preferences",
+                    "SMTP": "smtp_banner",
+                    "VRFY": "smtp_vrfy",
+                    "Catch": "catch_all",
+                    "IMAP": "imap_status",
+                    "IMAPInfo": "imap_info",
+                    "POP3": "pop3_status", 
+                    "POP3Info": "pop3_info",
+                    "Count": "check_count"
+                }
+                
+                # If we have selected columns, use them
+                if selected_columns:
+                    # Get display names from config
+                    display_names = {}
+                    if hasattr(self, 'config') and hasattr(self.config, 'LOG_COLUMNS'):
+                        for col_name in selected_columns:
+                            if col_name in self.config.LOG_COLUMNS:
+                                display_names[col_name] = self.config.LOG_COLUMNS[col_name].display_name
+                    
+                    # Prepare headers and db columns
+                    headers = []
+                    db_columns = []
+                    
+                    # Sort by index for consistent ordering
+                    for col_name, idx in sorted(selected_columns.items(), key=lambda x: x[1]):
+                        if col_name in column_mapping:
+                            headers.append(display_names.get(col_name, col_name))
+                            db_columns.append(column_mapping[col_name])
+                            
+                    # Explicitly use the provided limit parameter, falling back to config if available
+                    if limit is not None:
+                        # Use the explicitly provided limit
+                        log_limit = limit
+                    elif hasattr(self, 'config') and hasattr(self.config, 'LOG_DISPLAY_LIMIT'):
+                        # Use the config's value if available
+                        log_limit = self.config.LOG_DISPLAY_LIMIT
+                    else:
+                        # Default value
+                        log_limit = 0
+                    
+                    # If limit is 0, show all entries (no LIMIT clause)
+                    limit_clause = "" if log_limit == 0 else f" LIMIT {log_limit}"
+                    
+                    query = f"SELECT {', '.join(db_columns)} FROM email_logs ORDER BY id ASC{limit_clause}"
+                    logger.debug(f"SQL Query with limit {log_limit}: {query}")
+                    
+                    cursor.execute(query)
+                    rows = cursor.fetchall()
+                    
+                    return headers, rows
+                
+                else:
+                    # Default columns if none specified
+                    db_columns = ["id", "timestamp", "email", "result", "catch_all", "check_count"]
+                    headers = ["ID", "Time", "Email", "Result", "Catch-all", "Count"]
+                    
+                    # Use the limit parameter if provided
+                    log_limit = limit if limit is not None else 10
+                    limit_clause = "" if log_limit == 0 else f" LIMIT {log_limit}"
+                    
+                    query = f"SELECT {', '.join(db_columns)} FROM email_logs ORDER BY id ASC{limit_clause}"
+                    cursor.execute(query)
+                    rows = cursor.fetchall()
+                    
+                    return headers, rows
+                    
+        except Exception as e:
+            logger.error(f"Error in show_logs: {e}")
+            raise
 
     def clear_logs(self):
         """Clear all logs from the database"""
-        self._check_auth()
         with sqlite3.connect(self.db_path) as conn:
-            conn.execute(f"PRAGMA key='{self.password}'")  # Set database encryption key
             conn.execute("DELETE FROM email_logs")
             conn.commit()
 
     def clear_email_logs(self):
         """Clear all records from the email_logs table"""
         try:
-            self._check_auth()  # Verify authentication
             with sqlite3.connect(self.db_path) as conn:
-                conn.execute(f"PRAGMA key='{self.password}'")  # Set database encryption key
                 cursor = conn.cursor()
                 cursor.execute("DELETE FROM email_logs")
                 conn.commit()
@@ -358,62 +355,35 @@ class Database:
             logger.error(f"Error clearing email logs: {e}")
             raise
 
-    def add_user(self, name: str, email: str, alias: str = None):
-        """Add a new user with encrypted data"""
-        self._check_auth()
+    def add_user(self, name: str, email: str):
+        """Add a new user without alias"""
         with sqlite3.connect(self.db_path) as conn:
-            conn.execute(f"PRAGMA key='{self.password}'")  # Set database encryption key
-            encrypted_data = {
-                'name': self.encrypt(name),
-                'email': self.encrypt(email),
-                'alias': self.encrypt(alias) if alias else None
-            }
-            
             conn.execute("""
-                INSERT INTO user_info (name, alias, email, created_at)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO user_info (name, email, created_at)
+                VALUES (?, ?, ?)
             """, (
-                encrypted_data['name'],
-                encrypted_data['alias'],
-                encrypted_data['email'],
+                name,
+                email,
                 datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             ))
             conn.commit()
 
     def get_users(self):
-        """Retrieve and decrypt user info"""
-        self._check_auth()
+        """Retrieve user info without decryption"""
         with sqlite3.connect(self.db_path) as conn:
-            conn.execute(f"PRAGMA key='{self.password}'")  # Set database encryption key
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM user_info ORDER BY name")
-            rows = cursor.fetchall()
-            
-            # Decrypt sensitive data
-            decrypted_users = []
-            for row in rows:
-                decrypted_user = list(row)
-                decrypted_user[1] = self.decrypt(row[1])  # name
-                if row[2]:  # alias
-                    decrypted_user[2] = self.decrypt(row[2])
-                decrypted_user[3] = self.decrypt(row[3])  # email
-                decrypted_users.append(decrypted_user)
-            
-            return decrypted_users
+            return cursor.fetchall()
 
     def delete_user(self, user_id: int):
         """Delete a user by ID"""
-        self._check_auth()
         with sqlite3.connect(self.db_path) as conn:
-            conn.execute(f"PRAGMA key='{self.password}'")  # Set database encryption key
             conn.execute("DELETE FROM user_info WHERE id = ?", (user_id,))
             conn.commit()
 
-    def update_user(self, user_id: int, name: str = None, email: str = None, alias: str = None):
-        """Update user information"""
-        self._check_auth()
+    def update_user(self, user_id: int, name: str = None, email: str = None):
+        """Update user information without alias"""
         with sqlite3.connect(self.db_path) as conn:
-            conn.execute(f"PRAGMA key='{self.password}'")  # Set database encryption key
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM user_info WHERE id = ?", (user_id,))
             existing = cursor.fetchone()
@@ -421,79 +391,28 @@ class Database:
             if not existing:
                 raise ValueError(f"User with ID {user_id} not found")
             
-            encrypted_data = {
-                'name': self.encrypt(name) if name else existing[1],
-                'email': self.encrypt(email) if email else existing[3],
-                'alias': self.encrypt(alias) if alias else existing[2]
-            }
-            
             conn.execute("""
                 UPDATE user_info 
-                SET name = ?, alias = ?, email = ?
+                SET name = ?, email = ?
                 WHERE id = ?
             """, (
-                encrypted_data['name'],
-                encrypted_data['alias'],
-                encrypted_data['email'],
+                name if name else existing[1],
+                email if email else existing[2],
                 user_id
             ))
             conn.commit()
 
     def has_users(self):
         """Check if any users exist in the database"""
-        self._check_auth()
         with sqlite3.connect(self.db_path) as conn:
-            conn.execute(f"PRAGMA key='{self.password}'")  # Set database encryption key
             cursor = conn.cursor()
             cursor.execute("SELECT COUNT(*) FROM user_info")
             count = cursor.fetchone()[0]
             return count > 0
 
-    def _verify_password(self, password):
-        """Verify if the provided password matches the database password"""
-        try:
-            with open(self.key_file, 'rb') as f:
-                stored_data = f.read()
-            key, encrypted_password = stored_data.split(b":")
-            fernet = Fernet(key)
-            decrypted_password = fernet.decrypt(encrypted_password)
-            return decrypted_password.decode() == password
-        except Exception:
-            return False
-
-    def authenticate(self, password):
-        """Authenticate user and store username"""
-        try:
-            if self.is_authenticated:
-                return True
-                
-            if not self._verify_password(password):
-                return False
-                
-            # Load encryption key and store password
-            with open(self.key_file, 'rb') as f:
-                stored_data = f.read()
-            key, _ = stored_data.split(b":")
-            self.key = key
-            self.fernet = Fernet(self.key)
-            self.password = password
-                
-            # Get username from database
-            with sqlite3.connect(self.db_path) as conn:
-                conn.execute(f"PRAGMA key='{self.password}'")
-                cursor = conn.cursor()
-                cursor.execute("SELECT name FROM user_info WHERE id = 1")
-                result = cursor.fetchone()
-                
-                if result:
-                    self.current_user = self.decrypt(result[0])
-                    self.is_authenticated = True
-                    return True
-            return False
-                
-        except Exception as e:
-            logger.error(f"Authentication error: {e}")
-            return False
+    def authenticate(self):
+        """Simplified authentication - always succeeds"""
+        return True
 
     def get_connection(self):
         """Get a database connection"""
@@ -511,3 +430,92 @@ class Database:
         except Exception as e:
             logger.error(f"Error resetting sequence for {table_name}: {e}")
             raise
+
+    def init_general_settings(self):
+        """Initialize general settings in database"""
+        settings = [
+            # Rate Limiter Settings
+            ('rate_limiter', 'requests_per_window', '10', 'int', 'Maximum requests per time window'),
+            ('rate_limiter', 'window_seconds', '60', 'int', 'Time window in seconds'),
+            
+            # SMTP Settings
+            ('smtp', 'timeout', '10', 'int', 'SMTP timeout in seconds'),
+            ('smtp', 'max_retries', '3', 'int', 'Maximum retry attempts'),
+            ('smtp', 'ports', '[25,587,465]', 'json', 'SMTP ports to try'),
+            ('smtp', 'connection_pool_size', '10', 'int', 'Size of connection pool'),
+            
+            # Rate Limiting Settings
+            ('rate_limits', 'smtp_connections', '{"requests":10,"window":60}', 'json', 'SMTP connection rate limits'),
+            ('rate_limits', 'dns_lookups', '{"requests":100,"window":60}', 'json', 'DNS lookup rate limits'),
+            ('rate_limits', 'email_validations', '{"requests":50,"window":60}', 'json', 'Email validation rate limits'),
+        ]
+        
+        with self.conn:
+            self.conn.executemany('''
+                INSERT OR REPLACE INTO general_settings 
+                (category, name, value, data_type, description)
+                VALUES (?, ?, ?, ?, ?)
+            ''', settings)
+
+    def get_setting(self, category: str, name: str) -> Any:
+        """Get a setting value with type conversion"""
+        cursor = self.conn.execute('''
+            SELECT value, data_type 
+            FROM general_settings 
+            WHERE category = ? AND name = ?
+        ''', (category, name))
+        
+        row = cursor.fetchone()
+        if row:
+            value, data_type = row
+            if data_type == 'int':
+                return int(value)
+            elif data_type == 'float':
+                return float(value)
+            elif data_type == 'json':
+                return json.loads(value)
+            return value
+        return None
+
+    def get_category_settings(self, category: str) -> Dict[str, Any]:
+        """Get all settings for a category"""
+        cursor = self.conn.execute('''
+            SELECT name, value, data_type 
+            FROM general_settings 
+            WHERE category = ?
+        ''', (category,))
+        
+        settings = {}
+        for name, value, data_type in cursor.fetchall():
+            if data_type == 'int':
+                settings[name] = int(value)
+            elif data_type == 'float':
+                settings[name] = float(value)
+            elif data_type == 'json':
+                settings[name] = json.loads(value)
+            else:
+                settings[name] = value
+        return settings
+
+    def update_setting(self, category: str, name: str, value: Any):
+        """Update a setting value"""
+        # Convert value to string based on type
+        if isinstance(value, (list, dict)):
+            str_value = json.dumps(value)
+            data_type = 'json'
+        elif isinstance(value, int):
+            str_value = str(value)
+            data_type = 'int'
+        elif isinstance(value, float):
+            str_value = str(value)
+            data_type = 'float'
+        else:
+            str_value = str(value)
+            data_type = 'str'
+
+        with self.conn:
+            self.conn.execute('''
+                UPDATE general_settings 
+                SET value = ?, data_type = ?
+                WHERE category = ? AND name = ?
+            ''', (str_value, data_type, category, name))

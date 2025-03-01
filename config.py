@@ -1,7 +1,6 @@
 # config.py is a configuration file that contains settings and metadata for the script.
 
 import os
-import secrets
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Tuple, Optional
@@ -77,6 +76,9 @@ class Config:
         }
     )
 
+    # Number of log entries to display (0 for unlimited)
+    LOG_DISPLAY_LIMIT: int = 50
+
     # Log Columns Configuration - Change display_name values to customize how columns appear in logs
     LOG_COLUMNS: Dict[str, LogColumn] = field(
         default_factory=lambda: {
@@ -96,8 +98,8 @@ class Config:
                 show='Y'
             ),
             "Email": LogColumn(
-                name="Email",                 # Don't change this
-                display_name="E-mail Address", # Change this to customize email column header
+                name="Email",                 # Internal name for database
+                display_name="E-mail Address", # Display name for logs
                 category=cat.CORE,
                 index=2,
                 show='Y'
@@ -273,12 +275,8 @@ class Config:
     # User-Agent String
     USER_AGENT: str = 'EmailVerificationScript/1.0 (https://github.com/Ranrar/EVS)'
 
-    # Add database configuration
-    DATABASE_KEY = os.getenv('EVS_DB_KEY') or secrets.token_hex(32)
-
     # Database settings
     DB_PATH = 'email_verification.db'
-    KEY_FILE = 'db.key'
 
     def get_visible_columns(self) -> Dict[str, LogColumn]:
         """Get only the visible columns"""
