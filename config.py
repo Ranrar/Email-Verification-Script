@@ -109,7 +109,7 @@ class Config:
                 display_name="Domain Name",    # Change this to customize domain display
                 category=cat.CORE,
                 index=3,
-                show='N'
+                show='Y'
             ),
             "Result": LogColumn(
                 name="Result",                # Don't change this
@@ -237,12 +237,21 @@ class Config:
                 show='N'
             ),
             
+            # Add the server_policies column here
+            "Policies": LogColumn(
+                name="Policies",              # Don't change this
+                display_name="Server Policies", # Change this to customize server policies display
+                category=cat.SEC,              # It's a security check
+                index=21,                      # Position it after POP3Info
+                show='Y'                       # Hidden by default
+            ),
+            
             # Metadata - Additional information
             "Count": LogColumn(
                 name="Count",                 # Don't change this
                 display_name="Checks",         # Change this to customize check count display
                 category=cat.META,
-                index=21,
+                index=22,                      # Update index to come after Policies
                 show='Y'
             )
         }

@@ -21,6 +21,7 @@ import time
 import queue
 import logging
 import getpass
+import warnings
 from collections import deque
 from contextlib import contextmanager
 from config import Config
@@ -28,6 +29,14 @@ from datetime import datetime, timedelta
 from functools import wraps
 from database import Database
 from tabulate import tabulate
+
+# Silence warnings (optional)
+warnings.filterwarnings('ignore')
+
+# Silence other Python loggers that might be printing to console
+for log_name in ['urllib3', 'chardet', 'dns', 'imaplib', 'poplib']:
+    logging.getLogger(log_name).setLevel(logging.CRITICAL)
+    logging.getLogger(log_name).propagate = False
 
 def ttl_cache(maxsize=128, ttl=600):
     """Time-based cache decorator with maximum size limit"""
@@ -116,23 +125,33 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from typing import Optional, List
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('program.log'),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
+# logging setup
+def setup_logging():
+    """Configure application logging with file logging only (no console output)"""
+    logger = logging.getLogger('evs')
+    logger.setLevel(logging.DEBUG)  # Capture all logs at the logger level
+    
+    # Clear any existing handlers
+    if logger.handlers:
+        logger.handlers = []
+    
+    # File handler - logs everything at DEBUG level
+    log_format = "%(asctime)s - Thread %(thread)d - %(levelname)s - %(message)s"
+    file_handler = logging.FileHandler('evs.log')
+    file_handler.setLevel(logging.DEBUG)
+    file_formatter = logging.Formatter(log_format, datefmt="%d-%Y-%m %H:%M")
+    file_handler.setFormatter(file_formatter)
+    
+    # Add only file handler (no console handler)
+    logger.addHandler(file_handler)
+    
+    # Prevent log propagation to parent loggers (important!)
+    logger.propagate = False
+    
+    return logger
 
-# Update LOG_HEADER definition
-LOG_HEADER = ["ID"] + [
-    col.name 
-    for col in config.LOG_COLUMNS.values()
-    if col.show.upper() == 'Y'
-]
+# Initialize logger
+logger = setup_logging()
 
 # List of known blacklisted domains (for demonstration)
 BLACKLISTED_DOMAINS = {
@@ -197,7 +216,8 @@ def get_mx_record(domain: str) -> Optional[List[dns.resolver.Answer]]:
         answers = dns.resolver.resolve(domain, 'MX', lifetime=10)
         return sorted(answers, key=lambda x: x.preference)
     except Exception as e:
-        (f"DNS resolution error for {domain}: {e}")
+        # Fix incomplete logging statement
+        logger.error(f"DNS resolution error for {domain}: {e}")
         return None
 
 def check_spf(domain):
@@ -267,11 +287,14 @@ def test_smtp_connection(server, port, email, retries=config.MAX_RETRIES):
                 smtp.mail("test@domain.com")
                 code, _ = smtp.rcpt(email)
                 if code == 250:
+                    logger.debug(f"SMTP connection successful for {email} on {server}:{port}")
                     return True
         except Exception as e:
-            print(f"SMTP connection error on attempt {attempt + 1} for {server}:{port} - {e}")
-            time.sleep(2)  # Increase sleep duration between retries
-            continue
+            logger.debug(f"SMTP connection error on attempt {attempt + 1} for {server}:{port} - {e}")
+            if attempt + 1 < retries:
+                time.sleep(2)  # Increase sleep duration between retries
+                continue
+    logger.debug(f"SMTP connection failed after {retries} attempts for {email} on {server}:{port}")
     return False
 
 # Update rate limits for specific operations
@@ -337,16 +360,44 @@ def check_pop3_ssl(server):
     except Exception as e:
         return "Not available", str(e)
 
-def check_server_policies(domain: str) -> bool:
+def check_server_policies(domain: str) -> str:
     """Check if the domain has any specific anti-verification policies"""
-    # Implementation would check for:
-    # - RFC 7208 (SPF) policy
-    # - DMARC policy
-    # - Server banners indicating no verification
-    pass
+    policies = []
+    
+    # Check for DMARC policy
+    try:
+        answers = dns.resolver.resolve(f"_dmarc.{domain}", 'TXT')
+        for rdata in answers:
+            if "v=DMARC1" in str(rdata):
+                policies.append("DMARC")
+                break
+    except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
+        pass
+    
+    # Check for RFC 7208 (SPF) reject policies
+    try:
+        answers = dns.resolver.resolve(domain, 'TXT')
+        for rdata in answers:
+            txt = str(rdata)
+            if "v=spf1" in txt and ("-all" in txt or "~all" in txt):
+                policies.append("Strict SPF")
+                break
+    except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
+        pass
+    
+    # Return found policies or indication that none were found
+    if policies:
+        return ", ".join(policies)
+    else:
+        return "None detected"
 
 # --- Logging Functions ---
 
+def log_exception(message, exception, show_to_user=True):
+    """Centralized exception logging with optional user display"""
+    logger.error(f"{message}: {str(exception)}")
+    if show_to_user:
+        print(f"Error: {message.lower()}")
 
 def log_email_check(email, mx_record, spf_status, dkim_status, smtp_result, port, domain, **kwargs):
     """Log email verification results to database"""
@@ -371,7 +422,8 @@ def log_email_check(email, mx_record, spf_status, dkim_status, smtp_result, port
         'imap_status': kwargs.get('imap_status', ''),
         'imap_banner': kwargs.get('imap_banner', ''),
         'pop3_status': kwargs.get('pop3_status', ''),
-        'pop3_banner': kwargs.get('pop3_banner', '')
+        'pop3_banner': kwargs.get('pop3_banner', ''),
+        'server_policies': check_server_policies(domain) 
     }
     
     # Basic cleanup for display purposes
@@ -384,7 +436,7 @@ def log_email_check(email, mx_record, spf_status, dkim_status, smtp_result, port
         db = Database(config)
         db.log_check(data)
     except Exception as e:
-        logger.error(f"Failed to log email check: {e}")
+        log_exception("Failed to log email check", e, show_to_user=False)
 
 # --- Email Validation Functions ---
 
@@ -400,7 +452,7 @@ def check_smtp_with_port(domain, email, port):
 
 def validate_email(email):
     """Enhanced email validation with logging"""
-    logger.debug(f"Starting validation for email: {email}")
+    logger.info(f"Starting validation for email: {email}")
     try:
         if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
             log_email_check(email, "Invalid Format", "N/A", "N/A", "Invalid Email Format",
@@ -418,6 +470,7 @@ def validate_email(email):
         mx_ip = ""
         
         print(f"Checking MX records for {domain}...")
+        logger.debug(f"Checking MX records for {domain}")
         mx_records = get_mx_record(domain)
         if not mx_records:
             log_email_check(email, "No MX Records", "N/A", "N/A", "Could not verify email", "N/A", domain,
@@ -426,10 +479,14 @@ def validate_email(email):
             return "This domain cannot receive emails (no MX records)."
         
         primary_mx = str(mx_records[0].exchange).rstrip('.')
+        logger.debug(f"Primary MX for {domain} is {primary_mx}")
         print(f"Primary MX for {domain} is {primary_mx}.")
         
         spf_status = check_spf(domain)
         dkim_status = check_dkim(domain)
+        
+        # Add policy check here
+        policy_info = check_server_policies(domain) or "No specific policies detected"
         
         smtp_result = "Could not verify email"
         used_port = "N/A"
@@ -437,19 +494,23 @@ def validate_email(email):
         
         # Update port testing loop
         for port in config.PORTS_TO_TRY:
+            logger.debug(f"Testing {domain} on port {port}...")
             print(f"Testing {domain} on port {port}...")
             if test_smtp_connection(primary_mx, port, email):
                 smtp_result = "Email likely exists"
                 used_port = port
+                logger.info(f"Connection successful on port {port} for {email}")
                 break
         if smtp_result == "Email likely exists":
             fake_email = f"nonexistent{int(time.time())}@{domain}"
             if test_smtp_connection(primary_mx, used_port, fake_email):
                 smtp_result = "Email likely exists"
                 catch_all_email = fake_email
+                logger.info(f"Catch-all detected for {domain} using {fake_email}")
                 print(f"Catch-all detected: {fake_email} (email likely exists)")
         else:
             error_message = "SMTP check failed. Could not verify email."
+            logger.info(f"SMTP verification failed for {email}")
         
         code, vrfy_msg = smtp_vrfy(primary_mx, used_port if used_port != "N/A" else 25, email)
         smtp_vrfy_result = "Verified" if code == 250 else "Not Verified"
@@ -479,7 +540,8 @@ def validate_email(email):
             imap_status=imap_status,
             imap_banner=imap_banner,
             pop3_status=pop3_status,
-            pop3_banner=pop3_banner
+            pop3_banner=pop3_banner,
+            server_policies=policy_info
         )
         return smtp_result
     except Exception as e:
@@ -540,8 +602,7 @@ def display_logs():
         print()
         
     except Exception as e:
-        logger.error(f"Error displaying log: {e}")
-        print(f"Error reading log database: {e}")
+        log_exception("Error displaying logs", e)
 
 # --- Clear log---        
 # Replace clear_log function with:
@@ -552,14 +613,14 @@ def clear_log():
         confirmation = input("\nAre you sure you want to clear all email logs? This cannot be undone. (yes/no): ")
         
         if confirmation.lower() == 'yes':
-            db.clear_logs()
+            db.clear_logs() # Clear all logs
+            db.reset_sequence("email_logs")  # Reset sequence counter using the existing method
             print("\nAll logs have been cleared successfully.")
         else:
             print("\nLog clearing cancelled.")
             
     except Exception as e:
-        logger.error(f"Error clearing logs: {e}")
-        print(f"Error clearing logs: {e}")
+        log_exception("Error clearing logs", e)
 
 def toggle_column(column_name):
     """Toggle visibility of a specific column"""
@@ -576,6 +637,7 @@ def toggle_column(column_name):
 def main():
     """Main entry point"""
     try:
+        logger.info("Application starting")
         global db
         db = Database(config)
         
@@ -590,6 +652,7 @@ def main():
         # Clear screen and show welcome banner
         clear_screen()
         print(WELCOME_BANNER)
+        logger.debug("Entering main command loop")
                
         # Main command loop
         while True:
@@ -600,6 +663,7 @@ def main():
                 
                 # Handle special commands first
                 if user_input.lower() == "exit":
+                    logger.info("User initiated program exit")
                     clear_screen()
                     print("Exiting program.")
                     break
@@ -635,47 +699,56 @@ def main():
                 emails = [email.strip() for email in user_input.split(",") if email.strip()]
 
                 # Check if the input contains valid email(s)
-                if all(re.match(r"[^@]+@[^@]+\.[^@]+", email) for email in emails):  
+                if all(re.match(r"[^@]+@[^@]+\.[^@]+", email) for email in emails):
+                    logger.info(f"Processing email validation for: {', '.join(emails)}")
                     results = validate_emails(emails)
                     for email, result in zip(emails, results):
                         print(f"{email}: {result}\n")
                     continue  # Skip "Unknown command" check
 
                 # If input is neither a known command nor a valid email, show an error
+                logger.debug(f"Unknown command: {user_input}")
                 print("Unknown command. Type 'help' for available commands.")
                     
             except KeyboardInterrupt:
+                logger.debug("KeyboardInterrupt received")
                 print("\nUse 'exit' to quit.")
             except Exception as e:
-                logger.error(f"Command error: {e}")
-                print(f"Error: {e}")
+                log_exception("Command error", e)
     
     except Exception as e:
-        logger.error(f"Application error: {e}")
-        print(f"Fatal error: {e}")
-    
+        log_exception("Application error", e)
+        sys.exit(1)
+    finally:
+        logger.info("Application exiting")
 
 class SMTPConnectionPool:
     """SMTP Connection Pool"""
     def __init__(self, max_connections=10):
         self.pool = queue.Queue(maxsize=max_connections)
         self.active_connections = {}
+        logger.debug(f"Initialized SMTP connection pool with capacity {max_connections}")
 
     @contextmanager
     def get_connection(self, host, port):
         try:
             smtp = self.pool.get_nowait()
+            logger.debug(f"Reusing SMTP connection to {host}:{port}")
         except queue.Empty:
+            logger.debug(f"Creating new SMTP connection to {host}:{port}")
             smtp = smtplib.SMTP(timeout=10)
             
         try:
             if not smtp.sock:
+                logger.debug(f"Connecting to {host}:{port}")
                 smtp.connect(host, port)
             yield smtp
         finally:
             try:
                 self.pool.put_nowait(smtp)
+                logger.debug(f"Returned SMTP connection to pool for {host}:{port}")
             except queue.Full:
+                logger.debug(f"Connection pool full, closing connection to {host}:{port}")
                 smtp.quit()
 
 # Create global connection pool

@@ -126,6 +126,7 @@ class Database:
                         imap_info TEXT,
                         pop3_status TEXT,
                         pop3_info TEXT,
+                        server_policies TEXT,
                         check_count INTEGER DEFAULT 1
                     )
                 """)
@@ -182,10 +183,11 @@ class Database:
                         imap_info = ?,
                         pop3_status = ?,
                         pop3_info = ?,
+                        server_policies = ?,
                         check_count = ?
                         WHERE id = ?
                     """, (
-                        data.get('timestamp', datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+                        data.get('timestamp', datetime.now().strftime("%d-%m-%y %H:%M:%S")),
                         str(data.get('domain', '')),
                         data.get('result', ''),
                         str(data.get('error_message', '')),
@@ -204,6 +206,7 @@ class Database:
                         str(data.get('imap_info', '')),
                         data.get('pop3_status', ''),
                         str(data.get('pop3_info', '')),
+                        data.get('server_policies', ''),
                         new_count,
                         record_id
                     ))
@@ -215,10 +218,10 @@ class Database:
                             disposable, spf_status, dkim_status, blacklist_info,
                             mx_record, port, mx_ip, mx_preferences, smtp_banner,
                             smtp_vrfy, catch_all, imap_status, imap_info,
-                            pop3_status, pop3_info, check_count
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            pop3_status, pop3_info, server_policies, check_count
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
-                        data.get('timestamp', datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+                        data.get('timestamp', datetime.now().strftime("%d-%m-%y %H:%M:%S")),
                         email,
                         str(data.get('domain', '')),
                         data.get('result', ''),
@@ -238,6 +241,7 @@ class Database:
                         str(data.get('imap_info', '')),
                         data.get('pop3_status', ''),
                         str(data.get('pop3_info', '')),
+                        data.get('server_policies', ''),
                         1  # Initial check count
                     ))
                 conn.commit()
@@ -275,6 +279,7 @@ class Database:
                     "IMAPInfo": "imap_info",
                     "POP3": "pop3_status", 
                     "POP3Info": "pop3_info",
+                    "Policies": "server_policies",
                     "Count": "check_count"
                 }
                 
