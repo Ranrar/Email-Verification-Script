@@ -19,9 +19,6 @@ import sys
 import subprocess
 import time
 import queue
-import logging
-import getpass
-import warnings
 from collections import deque
 from contextlib import contextmanager
 from config import Config
@@ -29,27 +26,39 @@ from datetime import datetime, timedelta
 from functools import wraps
 from database import Database
 from tabulate import tabulate
+from packages.logger.logger import P_Log
 
-# Silence warnings (optional)
-warnings.filterwarnings('ignore')
-
-# Silence other Python loggers that might be printing to console
-for log_name in ['urllib3', 'chardet', 'dns', 'imaplib', 'poplib']:
-    logging.getLogger(log_name).setLevel(logging.CRITICAL)
-    logging.getLogger(log_name).propagate = False
-
+# Optimization: Add periodic cleanup for TTL cache
 def ttl_cache(maxsize=128, ttl=600):
     """Time-based cache decorator with maximum size limit"""
     cache = {}
     timestamps = {}
+    last_cleanup = datetime.now()
+    cleanup_interval = 60  # seconds
+    
+    def make_key(*args, **kwargs):
+        """Create a more efficient cache key"""
+        key_parts = [repr(arg) for arg in args]
+        key_parts.extend(f"{k}:{repr(v)}" for k, v in sorted(kwargs.items()))
+        return hash(tuple(key_parts))
     
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
-            key = str(args) + str(kwargs)
+            nonlocal last_cleanup
+            key = make_key(*args, **kwargs)
+            now = datetime.now()
+            
+            # Periodically clean expired entries
+            if (now - last_cleanup).total_seconds() > cleanup_interval:
+                expired_keys = [k for k, ts in timestamps.items() 
+                              if now - ts > timedelta(seconds=ttl)]
+                for k in expired_keys:
+                    if k in cache: del cache[k]
+                    if k in timestamps: del timestamps[k]
+                last_cleanup = now
             
             # Check if cached and not expired
-            now = datetime.now()
             if key in cache:
                 if now - timestamps[key] < timedelta(seconds=ttl):
                     return cache[key]
@@ -83,7 +92,7 @@ SCRIPT_IDENTITY = {
 }
 
 # List required external dependencies (modules not included in the standard library)
-required_dependencies = ["dns", "requests", "tabulate", "sqlite3", "cryptography"]
+required_dependencies = ["dns", "requests", "tabulate", "sqlite3"]
 missing_dependencies = []
 
 for dep in required_dependencies:
@@ -112,63 +121,37 @@ import socket
 import dns.resolver
 import smtplib
 import re
-import requests
-import csv
-from datetime import datetime
 import time
 import imaplib
 import poplib
 import webbrowser
-import configparser
+import requests
+import threading
+from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from tabulate import tabulate
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from typing import Optional, List
 
-# logging setup
-def setup_logging():
-    """Configure application logging with file logging only (no console output)"""
-    logger = logging.getLogger('evs')
-    logger.setLevel(logging.DEBUG)  # Capture all logs at the logger level
-    
-    # Clear any existing handlers
-    if logger.handlers:
-        logger.handlers = []
-    
-    # File handler - logs everything at DEBUG level
-    log_format = "%(asctime)s - Thread %(thread)d - %(levelname)s - %(message)s"
-    file_handler = logging.FileHandler('evs.log')
-    file_handler.setLevel(logging.DEBUG)
-    file_formatter = logging.Formatter(log_format, datefmt="%d-%Y-%m %H:%M")
-    file_handler.setFormatter(file_formatter)
-    
-    # Add only file handler (no console handler)
-    logger.addHandler(file_handler)
-    
-    # Prevent log propagation to parent loggers (important!)
-    logger.propagate = False
-    
-    return logger
-
 # Initialize logger
-logger = setup_logging()
+logger = P_Log(logger_name='evs', log_to_console=False)
 
-# List of known blacklisted domains (for demonstration)
+# Define blacklisted and disposable domains
 BLACKLISTED_DOMAINS = {
     "blacklisted.com": ["Spamhaus", "Barracuda", "SpamCop"],
     "baddomain.net": ["Spamhaus", "SORBS"],
     "malicious.org": ["SpamCop", "Spamhaus"]
 }
 
-# --- Other Script Definitions ---
-
+# clearer screen function
 def clear_screen():
-    # Check the operating system and use the appropriate command
     if platform.system() == "Windows":
         os.system('cls')  # Windows
     else:
         os.system('clear')  # Linux and macOS
-# --- Help ---
+
+# Help command
   
 def display_help():
     """Display custom help text."""
@@ -191,14 +174,14 @@ def display_help():
     )
     print(help_command)
 
-# --- Disposable and Blacklist Detection ---
+# Disposable email checking
 
 def is_disposable_email(email):
     """Check if the email is from a disposable email provider."""
     domain = email.split('@')[1].lower()
     return domain in config.DISPOSABLE_DOMAINS
 
-# Update blacklist checking
+# Blacklist checking
 def check_blacklists(email):
     """Check if the email's domain is blacklisted."""
     domain = email.split('@')[1].lower()
@@ -207,16 +190,42 @@ def check_blacklists(email):
     else:
         return "Not Blacklisted"
 
-# --- DNS and SMTP Functions ---
+# DNS Functions 
 
 @ttl_cache(maxsize=1000, ttl=3600)  # Cache for 1 hour
 def get_mx_record(domain: str) -> Optional[List[dns.resolver.Answer]]:
-    """Cached MX record lookup"""
+    """Cached MX record lookup with advanced error handling and fallback"""
     try:
-        answers = dns.resolver.resolve(domain, 'MX', lifetime=10)
-        return sorted(answers, key=lambda x: x.preference)
+        # Use explicit nameservers if configured
+        resolver = dns.resolver.Resolver()
+        if hasattr(config, 'DNS_SERVERS') and config.DNS_SERVERS:
+            resolver.nameservers = config.DNS_SERVERS
+            
+        answers = resolver.resolve(domain, 'MX', lifetime=10)
+        if answers:
+            return sorted(answers, key=lambda x: x.preference)
+        logger.warning(f"No MX records found for {domain}")
+        return None
+    except dns.resolver.NXDOMAIN:
+        logger.warning(f"Domain {domain} does not exist")
+        return None
+    except dns.resolver.NoAnswer:
+        logger.warning(f"No MX records for {domain}, trying A record as fallback")
+        try:
+            # Fallback to A record if no MX exists
+            a_answers = resolver.resolve(domain, 'A', lifetime=10)
+            if a_answers:
+                # Create a fake MX record with the A record
+                logger.info(f"Using A record as MX fallback for {domain}")
+                class FakeMX:
+                    def __init__(self, domain):
+                        self.exchange = domain
+                        self.preference = 10
+                return [FakeMX(domain)]
+        except Exception as e:
+            logger.debug(f"A record fallback failed for {domain}: {e}")
+        return None
     except Exception as e:
-        # Fix incomplete logging statement
         logger.error(f"DNS resolution error for {domain}: {e}")
         return None
 
@@ -274,9 +283,9 @@ def rate_limiter(max_requests=None, time_window=None):
         return wrapper
     return decorator
 
-# Apply rate limiting to key functions
-# Replace hardcoded values with config values in test_smtp_connection
-@rate_limiter()  # Uses default config values
+
+# --- SMTP Connection Functions ---
+@rate_limiter()  # Apply rate limiting to DNS lookups
 def test_smtp_connection(server, port, email, retries=config.MAX_RETRIES):
     """Test SMTP connection to a server"""
     timeout = config.SMTP_TIMEOUT
@@ -297,7 +306,7 @@ def test_smtp_connection(server, port, email, retries=config.MAX_RETRIES):
     logger.debug(f"SMTP connection failed after {retries} attempts for {email} on {server}:{port}")
     return False
 
-# Update rate limits for specific operations
+# Apply rate limiting to SMTP VRFY function
 @rate_limiter(
     max_requests=config.RATE_LIMITS['smtp_connections'][0],
     time_window=config.RATE_LIMITS['smtp_connections'][1]
@@ -314,7 +323,7 @@ def smtp_vrfy(server, port, email):
     except Exception as e:
         return None, str(e)
 
-# --- Additional Technical Details Functions ---
+#   SMTP Banner and MX IP Functions
 
 def get_smtp_banner(server):
     """Get the SMTP banner by trying HELLO and then EHLO commands, removing newlines."""
@@ -338,7 +347,7 @@ def get_mx_ip(server):
     except socket.gaierror:
         return "Unknown IP"
 
-# --- New Protocol Check Functions (IMAP/POP3) ---
+#  Check Functions (IMAP/POP3)
 
 def check_imap_ssl(server):
     """Check if the server supports IMAP over SSL on port 993."""
@@ -371,8 +380,9 @@ def check_server_policies(domain: str) -> str:
             if "v=DMARC1" in str(rdata):
                 policies.append("DMARC")
                 break
-    except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
-        pass
+    except Exception as e:
+        # Handle all DNS exceptions including NoNameservers
+        logger.debug(f"DMARC policy check failed for {domain}: {e}")
     
     # Check for RFC 7208 (SPF) reject policies
     try:
@@ -382,10 +392,11 @@ def check_server_policies(domain: str) -> str:
             if "v=spf1" in txt and ("-all" in txt or "~all" in txt):
                 policies.append("Strict SPF")
                 break
-    except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
-        pass
+    except Exception as e:
+        # Handle all DNS exceptions
+        logger.debug(f"SPF policy check failed for {domain}: {e}")
     
-    # Return found policies or indication that none were found
+    # Check for explicit reject policies in TXT records
     if policies:
         return ", ".join(policies)
     else:
@@ -426,10 +437,15 @@ def log_email_check(email, mx_record, spf_status, dkim_status, smtp_result, port
         'server_policies': check_server_policies(domain) 
     }
     
-    # Basic cleanup for display purposes
+    try:
+        server_policies = check_server_policies(domain)
+    except Exception as e:
+        logger.debug(f"Server policy check failed for {domain}: {e}")
+        server_policies = "Check failed"
+    
+    # Remove extra whitespace from string values
     for key, value in data.items():
         if isinstance(value, str):
-            # Remove newlines and extra spaces for display readability
             data[key] = ' '.join(value.split())
     
     try:
@@ -439,7 +455,6 @@ def log_email_check(email, mx_record, spf_status, dkim_status, smtp_result, port
         log_exception("Failed to log email check", e, show_to_user=False)
 
 # --- Email Validation Functions ---
-
 def check_smtp_with_port(domain, email, port):
     """Check the SMTP server with a specific port."""
     mx_records = get_mx_record(domain)
@@ -450,6 +465,24 @@ def check_smtp_with_port(domain, email, port):
                 return "Email likely exists"
     return "Could not verify email"
 
+def performance_monitor(func):
+    """Decorator to track function performance"""
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        start_time = time.time()
+        result = func(*args, **kwargs)
+        execution_time = time.time() - start_time
+        
+        # Log slow operations
+        if execution_time > 1.0:  # Log operations taking more than 1 second
+            logger.warning(f"Slow operation: {func.__name__} took {execution_time:.2f}s")
+        else:
+            logger.debug(f"Performance: {func.__name__} took {execution_time:.2f}s")
+            
+        return result
+    return wrapper
+
+@performance_monitor
 def validate_email(email):
     """Enhanced email validation with logging"""
     logger.info(f"Starting validation for email: {email}")
@@ -485,14 +518,14 @@ def validate_email(email):
         spf_status = check_spf(domain)
         dkim_status = check_dkim(domain)
         
-        # Add policy check here
+        # Check for specific server policies
         policy_info = check_server_policies(domain) or "No specific policies detected"
         
         smtp_result = "Could not verify email"
         used_port = "N/A"
         error_message = ""
         
-        # Update port testing loop
+        # Port testing loop
         for port in config.PORTS_TO_TRY:
             logger.debug(f"Testing {domain} on port {port}...")
             print(f"Testing {domain} on port {port}...")
@@ -549,19 +582,20 @@ def validate_email(email):
         raise
 
 def validate_emails(emails):
-    """Validate multiple email addresses in parallel."""
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        results = list(executor.map(validate_email, emails))
-    return results
+    """Validate multiple email addresses in parallel with optimized concurrency."""
+    worker_count = min(len(emails), config.MAX_WORKER_THREADS, os.cpu_count() * 2 or 5)
+    
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        chunk_size = max(1, len(emails) // worker_count)
+        futures = [executor.submit(validate_email, email) for email in emails]
+        return [future.result() for future in as_completed(futures)]
 
 # --- Show log---   
-
-# Update the load_selected_columns function
 def load_selected_columns():
     """Load column display settings from config"""
     selected_columns = {}
     
-    # Get visible columns directly using the helper method
+    # Get visible columns directly from config
     visible_columns = config.get_visible_columns()
     
     # Use the original column keys, not the name attribute
@@ -603,18 +637,16 @@ def display_logs():
         
     except Exception as e:
         log_exception("Error displaying logs", e)
-
-# --- Clear log---        
-# Replace clear_log function with:
+      
 def clear_log():
     """Clear the email logs table and reset sequence counter"""
     try:
-        # Simple confirmation without password verification
+        # Simple confirmation
         confirmation = input("\nAre you sure you want to clear all email logs? This cannot be undone. (yes/no): ")
         
         if confirmation.lower() == 'yes':
             db.clear_logs() # Clear all logs
-            db.reset_sequence("email_logs")  # Reset sequence counter using the existing method
+            db.reset_sequence("email_logs")  # Reset sequence counter
             print("\nAll logs have been cleared successfully.")
         else:
             print("\nLog clearing cancelled.")
@@ -641,12 +673,16 @@ def main():
         global db
         db = Database(config)
         
-        # Define welcome banner
         WELCOME_BANNER = (
-            "======================================================================\n"
-            "Welcome to the Email Verification Script!\n"
-            "Type 'help' to see available commands.\n"
-            "======================================================================\n"
+    "======================================================================\n"
+    "Email Verification Script - Version 1.0\n"
+    "Copyright (C) 2025 Kim Skov Rasmussen\n"
+    "Licensed under GNU General Public License v3.0\n"  
+    "This software is provided as is, without any warranties.\n"  
+    "Use at your own risk. For educational purposes only.\n"
+    "\n"
+    "Type 'help' to see available commands.\n"
+    "======================================================================\n"
         )
         
         # Clear screen and show welcome banner
@@ -661,7 +697,7 @@ def main():
                 if not user_input:
                     continue
                 
-                # Handle special commands first
+                # Handle commands
                 if user_input.lower() == "exit":
                     logger.info("User initiated program exit")
                     clear_screen()
@@ -677,7 +713,6 @@ def main():
                     continue
 
                 elif user_input.lower() == "read more":
-                    # Construct the file path and open it in the browser
                     file_path = os.path.join(os.getcwd(), "README.md")
                     webbrowser.open(file_path)
                     continue
@@ -723,38 +758,68 @@ def main():
         logger.info("Application exiting")
 
 class SMTPConnectionPool:
-    """SMTP Connection Pool"""
+    """Improved SMTP Connection Pool with connection reuse by server"""
     def __init__(self, max_connections=10):
-        self.pool = queue.Queue(maxsize=max_connections)
-        self.active_connections = {}
+        self.pool = {}
+        self.max_per_server = max_connections
+        self.lock = threading.RLock()
         logger.debug(f"Initialized SMTP connection pool with capacity {max_connections}")
 
     @contextmanager
     def get_connection(self, host, port):
-        try:
-            smtp = self.pool.get_nowait()
-            logger.debug(f"Reusing SMTP connection to {host}:{port}")
-        except queue.Empty:
-            logger.debug(f"Creating new SMTP connection to {host}:{port}")
-            smtp = smtplib.SMTP(timeout=10)
+        server_key = f"{host}:{port}"
+        
+        with self.lock:
+            if server_key not in self.pool:
+                self.pool[server_key] = []
             
+            if self.pool[server_key]:
+                smtp = self.pool[server_key].pop()
+                reused = True
+            else:
+                smtp = smtplib.SMTP(timeout=10)
+                reused = False
+        
         try:
-            if not smtp.sock:
-                logger.debug(f"Connecting to {host}:{port}")
+            if not reused or not smtp.sock:
+                logger.debug(f"{'Reusing' if reused else 'Creating new'} SMTP connection to {host}:{port}")
                 smtp.connect(host, port)
+                smtp.ehlo() 
             yield smtp
         finally:
+            with self.lock:
+                if len(self.pool[server_key]) < self.max_per_server:
+                    self.pool[server_key].append(smtp)
+                    logger.debug(f"Returned SMTP connection to pool for {server_key}")
+                else:
+                    try:
+                        smtp.quit()
+                    except:
+                        pass
+                    logger.debug(f"Pool for {server_key} full, closed connection")
+
+@contextmanager
+def safe_smtp_connection(server, port):
+    """Safe SMTP connection context manager with proper resource cleanup"""
+    smtp = None
+    try:
+        smtp = smtplib.SMTP(timeout=10)
+        smtp.connect(server, port)
+        yield smtp
+    except Exception as e:
+        logger.error(f"SMTP connection error: {e}")
+        raise
+    finally:
+        if smtp:
             try:
-                self.pool.put_nowait(smtp)
-                logger.debug(f"Returned SMTP connection to pool for {host}:{port}")
-            except queue.Full:
-                logger.debug(f"Connection pool full, closing connection to {host}:{port}")
                 smtp.quit()
+            except Exception:
+                pass 
 
 # Create global connection pool
 smtp_pool = SMTPConnectionPool(max_connections=config.CONNECTION_POOL_SIZE)
 
-# Initialize database connection (move this near the top with other initializations)
+# Initialize database connection
 db = None  # Will be initialized in main()
 
 if __name__ == "__main__":

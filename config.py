@@ -287,6 +287,11 @@ class Config:
     # Database settings
     DB_PATH = 'email_verification.db'
 
+    # Thread pool settings
+    MAX_WORKER_THREADS = 10  # Maximum number of worker threads for parallel email validation
+    CONNECTION_TIMEOUT = 15  # Connection timeout in seconds
+    THREAD_IDLE_TIMEOUT = 60  # How long to keep idle threads alive
+
     def get_visible_columns(self) -> Dict[str, LogColumn]:
         """Get only the visible columns"""
         return {key: col 

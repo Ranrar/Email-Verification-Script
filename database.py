@@ -1,21 +1,12 @@
 import sqlite3
 import os
-import sys
 from datetime import datetime
-import logging
 import json
-from typing import Any, Dict, List, Union
+from typing import Any, Dict
+from packages.logger.logger import P_Log
 
-# Configure logger with more detailed logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('database.log'),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
+# logging
+logger = P_Log(logger_name='evs', log_to_console=False)
 
 def clear_screen():
     """Clear the console screen."""
