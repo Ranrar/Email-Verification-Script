@@ -2,6 +2,7 @@ import os
 import logging
 import warnings
 from datetime import datetime
+from logging.handlers import RotatingFileHandler  # Add this import
 
 # Silence warnings (optional)
 warnings.filterwarnings('ignore')
@@ -11,13 +12,16 @@ for log_name in ['urllib3', 'chardet', 'dns', 'imaplib', 'poplib']:
     logging.getLogger(log_name).setLevel(logging.CRITICAL)
     logging.getLogger(log_name).propagate = False
 
-def P_Log(logger_name='evs', log_level=logging.DEBUG, log_to_console=False):
+def P_Log(logger_name='evs', log_level=logging.DEBUG, log_to_console=False, 
+          max_bytes=10*1024*1024, backup_count=5):  # Default 10MB file size, keep 5 backups
     """Configure application logging with file logging and optional console output
     
     Args:
         logger_name (str): Name of the logger and log file (default: 'evs')
         log_level (int): The minimum logging level to capture (default: DEBUG)
         log_to_console (bool): Whether to also log to console (default: False)
+        max_bytes (int): Max size of log file before rotation in bytes (default: 10MB)
+        backup_count (int): Number of backup files to keep (default: 5)
         
     Returns:
         logging.Logger: A configured logger instance
@@ -38,9 +42,15 @@ def P_Log(logger_name='evs', log_level=logging.DEBUG, log_to_console=False):
     if logger.handlers:
         logger.handlers = []
     
-    # File handler - logs everything at specified level
+    # File handler with rotation - logs everything at specified level
     log_format = "%(asctime)s - Thread %(thread)d - %(levelname)s - %(message)s"
-    file_handler = logging.FileHandler(log_file)
+    
+    # Replace FileHandler with RotatingFileHandler
+    file_handler = RotatingFileHandler(
+        log_file,
+        maxBytes=max_bytes,
+        backupCount=backup_count
+    )
     file_handler.setLevel(log_level)
     file_formatter = logging.Formatter(log_format, datefmt="%d-%m-%y %H:%M:%S")
     file_handler.setFormatter(file_formatter)

@@ -21,6 +21,7 @@ class Database:
         if cls._instance is None:
             cls._instance = super(Database, cls).__new__(cls)
             cls._instance._initialized = False
+            logger.debug("Creating new Database singleton instance")
         return cls._instance
 
     def __init__(self, config=None):
@@ -28,6 +29,8 @@ class Database:
         if self._initialized:
             return
             
+        logger.info("Initializing database connection")
+        
         # Basic attributes
         self.db_dir = os.path.join(os.getcwd(), 'DB')
         self.db_path = os.path.join(self.db_dir, 'EVS.db')
@@ -36,13 +39,17 @@ class Database:
         
         # Create DB directory if needed
         if not os.path.exists(self.db_dir):
+            logger.info(f"Creating database directory: {self.db_dir}")
             os.makedirs(self.db_dir)
         
         # Set first run flag
         self.first_run = not os.path.exists(self.db_path)
         
         if self.first_run:
+            logger.info("First run detected - initializing new database")
             self._initialize_new_database()
+        else:
+            logger.info(f"Using existing database at {self.db_path}")
         
         self._initialized = True
 
@@ -92,8 +99,10 @@ class Database:
     def init_database(self):
         """Initialize the database"""
         try:
+            logger.info("Creating database schema")
             with sqlite3.connect(self.db_path) as conn:
                 # Create email_logs table
+                logger.debug("Creating email_logs table if not exists")
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS email_logs (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -123,6 +132,7 @@ class Database:
                 """)
                 
                 # Create user_info table without alias column
+                logger.debug("Creating user_info table if not exists")
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS user_info (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -132,17 +142,19 @@ class Database:
                     )
                 """)
                 conn.commit()
+                logger.info("Database schema created successfully")
         except Exception as e:
+            logger.error(f"Failed to initialize database: {str(e)}")
             raise Exception(f"Failed to initialize database: {str(e)}")
 
     def log_check(self, data):
         """Log an email check with counter for duplicates"""
         try:
+            email = str(data.get('email', '')).strip()
+            logger.info(f"Logging check for email: {email}")
+            
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
-                
-                # Ensure email is a string and properly formatted
-                email = str(data.get('email', '')).strip()
                 
                 # Check if this email already exists
                 cursor.execute("SELECT id, check_count FROM email_logs WHERE email = ?", (email,))
@@ -152,6 +164,7 @@ class Database:
                     # Email exists - update record and increment counter
                     record_id, current_count = existing
                     new_count = current_count + 1
+                    logger.debug(f"Updating existing record for {email}, new check count: {new_count}")
                     
                     cursor.execute("""
                         UPDATE email_logs SET
@@ -203,6 +216,7 @@ class Database:
                     ))
                 else:
                     # New email - insert with check_count = 1
+                    logger.debug(f"Creating new record for {email}")
                     cursor.execute("""
                         INSERT INTO email_logs (
                             timestamp, email, domain, result, error_message,
@@ -236,14 +250,20 @@ class Database:
                         1  # Initial check count
                     ))
                 conn.commit()
-                
+                logger.info(f"Email check for {email} logged successfully")
+                    
+        except sqlite3.Error as e:
+            logger.error(f"SQLite error in log_check: {e}")
+            raise
         except Exception as e:
-            logger.error(f"Error in log_check: {e}")
+            logger.error(f"Unexpected error in log_check: {e}")
             raise
 
     def show_logs(self, selected_columns=None, limit=None):
         """Retrieve logs with proper column filtering"""
+        start_time = datetime.now()
         try:
+            logger.info(f"Retrieving logs with limit: {limit}")
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 
@@ -313,6 +333,8 @@ class Database:
                     cursor.execute(query)
                     rows = cursor.fetchall()
                     
+                    elapsed = (datetime.now() - start_time).total_seconds()
+                    logger.debug(f"Retrieved {len(rows)} log entries in {elapsed:.3f} seconds")
                     return headers, rows
                 
                 else:
@@ -328,17 +350,26 @@ class Database:
                     cursor.execute(query)
                     rows = cursor.fetchall()
                     
+                    elapsed = (datetime.now() - start_time).total_seconds()
+                    logger.debug(f"Retrieved {len(rows)} log entries in {elapsed:.3f} seconds")
                     return headers, rows
                     
         except Exception as e:
-            logger.error(f"Error in show_logs: {e}")
+            elapsed = (datetime.now() - start_time).total_seconds()
+            logger.error(f"Error in show_logs after {elapsed:.3f} seconds: {e}")
             raise
 
     def clear_logs(self):
         """Clear all logs from the database"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute("DELETE FROM email_logs")
-            conn.commit()
+        try:
+            logger.warning("Clearing all logs from database")
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute("DELETE FROM email_logs")
+                conn.commit()
+                logger.info("All logs cleared successfully")
+        except Exception as e:
+            logger.error(f"Failed to clear logs: {str(e)}")
+            raise
 
     def clear_email_logs(self):
         """Clear all records from the email_logs table"""
@@ -353,16 +384,22 @@ class Database:
 
     def add_user(self, name: str, email: str):
         """Add a new user without alias"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute("""
-                INSERT INTO user_info (name, email, created_at)
-                VALUES (?, ?, ?)
-            """, (
-                name,
-                email,
-                datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            ))
-            conn.commit()
+        try:
+            logger.info(f"Adding new user: {name}, {email}")
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute("""
+                    INSERT INTO user_info (name, email, created_at)
+                    VALUES (?, ?, ?)
+                """, (
+                    name,
+                    email,
+                    datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                ))
+                conn.commit()
+                logger.info("User added successfully")
+        except Exception as e:
+            logger.error(f"Failed to add user: {str(e)}")
+            raise
 
     def get_users(self):
         """Retrieve user info without decryption"""
@@ -412,6 +449,7 @@ class Database:
 
     def get_connection(self):
         """Get a database connection"""
+        logger.debug("Getting new database connection")
         return sqlite3.connect(self.db_path)
 
     def reset_sequence(self, table_name):
