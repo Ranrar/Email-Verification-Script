@@ -157,11 +157,12 @@ def display_help():
     """Display custom help text."""
     help_command = (
         "\n"
-        "Usage:\n"
+        "USAGE:\n"
         "----------------------------------------------------------------------\n"
         "  • Enter one or more email addresses separated by commas to check their validity.\n"
         "  • For example: test@example.com, user@domain.com\n"
-        "\n"
+        "  • Results include a confidence score (0-100) and confidence level\n"
+        "\n"        
         "AVAILABLE COMMANDS:\n"
         "----------------------------------------------------------------------\n"
         "  • 'help'      - Display this help message\n"
@@ -171,6 +172,20 @@ def display_help():
         "  • 'read more' - Learn more about features, functions, and use cases\n"
         "  • 'who am i'  - Display current user information\n"
         "  • 'exit'      - Quit the program\n"
+        "\n"
+        "CONFIDENCE LEVELS:\n"
+        "----------------------------------------------------------------------\n"
+        "  • Very High (90-100): Email almost certainly exists\n"
+        "  • High (70-89): Email very likely exists\n"
+        "  • Medium (50-69): Email probably exists\n"
+        "  • Low (30-49): Email may exist but verification is uncertain\n"
+        "  • Very Low (0-29): Email likely doesn't exist\n"
+        "\n"
+        "COLUMN CUSTOMIZATION:\n"
+        "----------------------------------------------------------------------\n"
+        "  • To change column visibility: Edit the 'show' value ('Y' or 'N') in config.py\n"
+        "  • To change column order: Edit the 'index' value in config.py\n"
+        "  • Lower index values appear first in the display\n"
     )
     print(help_command)
 
@@ -434,7 +449,8 @@ def log_email_check(email, mx_record, spf_status, dkim_status, smtp_result, port
         'imap_banner': kwargs.get('imap_banner', ''),
         'pop3_status': kwargs.get('pop3_status', ''),
         'pop3_banner': kwargs.get('pop3_banner', ''),
-        'server_policies': check_server_policies(domain) 
+        'server_policies': check_server_policies(domain),
+        'confidence_score': kwargs.get('confidence_score', 0)  # Add this line
     }
     
     try:
@@ -484,17 +500,39 @@ def performance_monitor(func):
 
 @performance_monitor
 def validate_email(email):
-    """Enhanced email validation with logging"""
+    """Enhanced email validation with confidence scoring"""
     logger.info(f"Starting validation for email: {email}")
+    confidence_score = 0  # Initialize confidence score
+    
     try:
+        # Check email format
         if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
             log_email_check(email, "Invalid Format", "N/A", "N/A", "Invalid Email Format",
-                            "N/A", "N/A", error_message="Invalid email format", blacklist_info=check_blacklists(email))
+                          "N/A", "N/A", error_message="Invalid email format", 
+                          blacklist_info=check_blacklists(email),
+                          confidence_score=0)  # Zero confidence for invalid format
             return "Invalid email format."
-        
+        else:
+            confidence_score += 20  # Valid format gives 20 points
+            
         domain = email.split('@')[1]
         disposable_status = "Disposable" if is_disposable_email(email) else "Not Disposable"
+        
+        # Penalize disposable emails
+        if disposable_status == "Not Disposable":
+            confidence_score += 10
+        else:
+            confidence_score -= 10
+            
+        logger.debug(f"Email {'is' if disposable_status == 'Disposable' else 'is not'} disposable, " 
+                     f"{'subtracting 10 from' if disposable_status == 'Disposable' else 'adding 10 to'} "
+                     f"confidence score (now {confidence_score})")
+        
         blacklist_info = check_blacklists(email)
+        
+        # Penalize blacklisted domains
+        if blacklist_info != "Not Blacklisted":
+            confidence_score -= 15
         
         smtp_vrfy_result = ""
         catch_all_email = ""
@@ -507,9 +545,12 @@ def validate_email(email):
         mx_records = get_mx_record(domain)
         if not mx_records:
             log_email_check(email, "No MX Records", "N/A", "N/A", "Could not verify email", "N/A", domain,
-                            error_message="No MX records found", blacklist_info=blacklist_info, disposable_status=disposable_status,
-                            smtp_vrfy_result="N/A", mx_preferences="N/A", smtp_banner="N/A", mx_ip="N/A")
+                          error_message="No MX records found", blacklist_info=blacklist_info, 
+                          disposable_status=disposable_status, confidence_score=confidence_score)
             return "This domain cannot receive emails (no MX records)."
+        else:
+            confidence_score += 20  # Having valid MX records gives 20 points
+            logger.debug(f"MX records found for {domain}, adding 20 to confidence score (now {confidence_score})")
         
         primary_mx = str(mx_records[0].exchange).rstrip('.')
         logger.debug(f"Primary MX for {domain} is {primary_mx}")
@@ -518,6 +559,12 @@ def validate_email(email):
         spf_status = check_spf(domain)
         dkim_status = check_dkim(domain)
         
+        # Add points for valid SPF and DKIM
+        if spf_status == "SPF Found":
+            confidence_score += 5
+        if dkim_status == "DKIM Found":
+            confidence_score += 5
+            
         # Check for specific server policies
         policy_info = check_server_policies(domain) or "No specific policies detected"
         
@@ -533,7 +580,9 @@ def validate_email(email):
                 smtp_result = "Email likely exists"
                 used_port = port
                 logger.info(f"Connection successful on port {port} for {email}")
+                confidence_score += 30  # Successful SMTP connection adds 30 points
                 break
+                
         if smtp_result == "Email likely exists":
             fake_email = f"nonexistent{int(time.time())}@{domain}"
             if test_smtp_connection(primary_mx, used_port, fake_email):
@@ -541,6 +590,10 @@ def validate_email(email):
                 catch_all_email = fake_email
                 logger.info(f"Catch-all detected for {domain} using {fake_email}")
                 print(f"Catch-all detected: {fake_email} (email likely exists)")
+                confidence_score -= 15  # Catch-all domains reduce confidence
+            else:
+                # No catch-all, higher confidence in result
+                confidence_score += 15
         else:
             error_message = "SMTP check failed. Could not verify email."
             logger.info(f"SMTP verification failed for {email}")
@@ -548,11 +601,30 @@ def validate_email(email):
         code, vrfy_msg = smtp_vrfy(primary_mx, used_port if used_port != "N/A" else 25, email)
         smtp_vrfy_result = "Verified" if code == 250 else "Not Verified"
         
+        # Add points if VRFY command confirms the email
+        if smtp_vrfy_result == "Verified":
+            confidence_score += 10
+            
         mx_preferences = ", ".join([str(mx.preference) for mx in mx_records])
         smtp_banner = get_smtp_banner(primary_mx)
         mx_ip = get_mx_ip(primary_mx)
         imap_status, imap_banner = check_imap_ssl(primary_mx)
         pop3_status, pop3_banner = check_pop3_ssl(primary_mx)
+        
+        # Add a few points if these services are available (more robust email system)
+        if imap_status == "Available":
+            confidence_score += 5
+        if pop3_status == "Available":
+            confidence_score += 5
+        
+        # Cap confidence between 0-100
+        confidence_score = max(0, min(100, confidence_score))
+        
+        # Get confidence level label
+        confidence_level = get_confidence_level(confidence_score)
+        
+        # Update the result message with confidence information
+        result_with_confidence = f"{smtp_result} (Confidence: {confidence_level}, {confidence_score}/100)"
         
         log_email_check(
             email=email,
@@ -574,9 +646,11 @@ def validate_email(email):
             imap_banner=imap_banner,
             pop3_status=pop3_status,
             pop3_banner=pop3_banner,
-            server_policies=policy_info
+            server_policies=policy_info,
+            confidence_score=confidence_score  # Add this line
         )
-        return smtp_result
+        logger.info(f"Validation complete for {email}: confidence score is {confidence_score}/100 ({get_confidence_level(confidence_score)})")
+        return result_with_confidence
     except Exception as e:
         logger.error(f"Error validating {email}: {str(e)}", exc_info=True)
         raise
@@ -821,6 +895,19 @@ smtp_pool = SMTPConnectionPool(max_connections=config.CONNECTION_POOL_SIZE)
 
 # Initialize database connection
 db = None  # Will be initialized in main()
+
+def get_confidence_level(score):
+    """Convert numerical score to confidence level description"""
+    if score >= 90:
+        return "Very High"
+    elif score >= 70:
+        return "High"
+    elif score >= 50:
+        return "Medium"
+    elif score >= 30:
+        return "Low"
+    else:
+        return "Very Low"
 
 if __name__ == "__main__":
     main()

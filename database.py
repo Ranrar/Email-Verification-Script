@@ -127,7 +127,8 @@ class Database:
                         pop3_status TEXT,
                         pop3_info TEXT,
                         server_policies TEXT,
-                        check_count INTEGER DEFAULT 1
+                        check_count INTEGER DEFAULT 1,
+                        confidence_score INTEGER DEFAULT 0
                     )
                 """)
                 
@@ -188,7 +189,8 @@ class Database:
                         pop3_status = ?,
                         pop3_info = ?,
                         server_policies = ?,
-                        check_count = ?
+                        check_count = ?,
+                        confidence_score = ?
                         WHERE id = ?
                     """, (
                         data.get('timestamp', datetime.now().strftime("%d-%m-%y %H:%M:%S")),
@@ -212,6 +214,7 @@ class Database:
                         str(data.get('pop3_info', '')),
                         data.get('server_policies', ''),
                         new_count,
+                        data.get('confidence_score', 0),  # Add confidence score
                         record_id
                     ))
                 else:
@@ -223,8 +226,9 @@ class Database:
                             disposable, spf_status, dkim_status, blacklist_info,
                             mx_record, port, mx_ip, mx_preferences, smtp_banner,
                             smtp_vrfy, catch_all, imap_status, imap_info,
-                            pop3_status, pop3_info, server_policies, check_count
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            pop3_status, pop3_info, server_policies, check_count,
+                            confidence_score
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
                         data.get('timestamp', datetime.now().strftime("%d-%m-%y %H:%M:%S")),
                         email,
@@ -247,7 +251,8 @@ class Database:
                         data.get('pop3_status', ''),
                         str(data.get('pop3_info', '')),
                         data.get('server_policies', ''),
-                        1  # Initial check count
+                         1,  # Initial check count
+                        data.get('confidence_score', 0)  # Confidence score
                     ))
                 conn.commit()
                 logger.info(f"Email check for {email} logged successfully")
@@ -291,7 +296,8 @@ class Database:
                     "POP3": "pop3_status", 
                     "POP3Info": "pop3_info",
                     "Policies": "server_policies",
-                    "Count": "check_count"
+                    "Count": "check_count",
+                    "Confidence": "confidence_score"
                 }
                 
                 # If we have selected columns, use them

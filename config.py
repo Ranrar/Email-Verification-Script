@@ -109,7 +109,7 @@ class Config:
                 display_name="Domain Name",    # Change this to customize domain display
                 category=cat.CORE,
                 index=3,
-                show='Y'
+                show='N'
             ),
             "Result": LogColumn(
                 name="Result",                # Don't change this
@@ -204,7 +204,7 @@ class Config:
                 display_name="Catch-all",      # Change this to customize catch-all display
                 category=cat.TECH,
                 index=16,
-                show='Y'
+                show='N'
             ),
             
             # Protocol - Additional protocol checks
@@ -251,7 +251,14 @@ class Config:
                 name="Count",                 # Don't change this
                 display_name="Checks",         # Change this to customize check count display
                 category=cat.META,
-                index=22,                      # Update index to come after Policies
+                index=23,                      # Update index to come after Policies
+                show='Y'
+            ),
+            "Confidence": LogColumn(
+                name="Confidence",             # Don't change this
+                display_name="Confidence score", # Change this to customize confidence score display
+                category=cat.CORE,
+                index=22,
                 show='Y'
             )
         }
