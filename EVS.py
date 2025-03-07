@@ -837,8 +837,16 @@ def main():
                     continue
 
                 elif user_input.lower() == "who am i":
-                    print(f"Current user: {config.USER_CREDENTIALS.USER_NAME}")
-                    print(f"User email: {config.USER_CREDENTIALS.USER_EMAIL}")            
+                    print(
+                    "\n""- \033[3mHe yells this out in frustration,\n"
+                    "  and confusion as he tries to uncover his identity.\033[0m \n"
+                    "\n"
+                    "USER INFORMATION: \n"
+                    "======================================================================"
+                    )
+                    print(f"Name       : {config.USER_CREDENTIALS.USER_NAME}")
+                    print(f"E-mail     : {config.USER_CREDENTIALS.USER_EMAIL}")
+                    print(f"Created at : {config.USER_CREDENTIALS.USER_CREATION_TIME}")
                     continue
 
                 # Split input by commas and remove empty spaces

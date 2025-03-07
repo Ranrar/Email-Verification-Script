@@ -74,8 +74,6 @@ class Database:
                 break
             print("Name cannot be empty.")
         
-        # Removed alias input
-        
         while True:
             email = input("Email: ").strip()
             if '@' in email and '.' in email:
@@ -404,7 +402,7 @@ class Database:
                 """, (
                     name,
                     email,
-                    datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    datetime.now().strftime("%d-%m-%y %H:%M:%S")
                 ))
                 conn.commit()
                 logger.info("User added successfully")

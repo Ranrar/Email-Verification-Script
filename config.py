@@ -19,16 +19,19 @@ class UserCredentials:
             if users and len(users) > 0:
                 # Use the first user's credentials
                 self.USER_NAME = users[0][1]  # index 1 is name
-                self.USER_EMAIL = users[0][3]  # index 3 is email
+                self.USER_EMAIL = users[0][2]  # index 3 is email
+                self.USER_CREATION_TIME = users[0][3] # index 3 is creation time
             else:
                 # Fallback defaults if no users found
                 self.USER_NAME = 'your_username'
                 self.USER_EMAIL = 'your@email.com'
+                self.USER_CREATION_TIME = 'Not available'
         except Exception as e:
             print(f"Warning: Could not load user credentials: {e}")
             # Set fallback values
             self.USER_NAME = 'your_username'
             self.USER_EMAIL = 'your@email.com'
+            self.USER_CREATION_TIME = 'Not available'
 
 class cat(Enum):
     """Short names for column categories"""
