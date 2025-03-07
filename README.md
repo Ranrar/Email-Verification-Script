@@ -15,6 +15,8 @@ is actively in use, especially for critical applications. To ensure
 higher accuracy, it's recommended to use this tool alongside other 
 verification methods.
 
+![evs](https://github.com/user-attachments/assets/76002389-9fe9-4721-aa5b-ccce8001ddcc)
+
 ## Key Features and Functions
 
 1. Email Format Validation:
