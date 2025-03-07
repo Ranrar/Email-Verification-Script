@@ -128,7 +128,8 @@ class Database:
                         pop3_info TEXT,
                         server_policies TEXT,
                         check_count INTEGER DEFAULT 1,
-                        confidence_score INTEGER DEFAULT 0
+                        confidence_score INTEGER DEFAULT 0,
+                        execution_time REAL DEFAULT 0
                     )
                 """)
                 
@@ -190,7 +191,8 @@ class Database:
                         pop3_info = ?,
                         server_policies = ?,
                         check_count = ?,
-                        confidence_score = ?
+                        confidence_score = ?,
+                        execution_time = ?
                         WHERE id = ?
                     """, (
                         data.get('timestamp', datetime.now().strftime("%d-%m-%y %H:%M:%S")),
@@ -214,7 +216,8 @@ class Database:
                         str(data.get('pop3_info', '')),
                         data.get('server_policies', ''),
                         new_count,
-                        data.get('confidence_score', 0),  # Add confidence score
+                        data.get('confidence_score', 0),
+                        data.get('execution_time', 0.0),  # Add execution time
                         record_id
                     ))
                 else:
@@ -227,8 +230,8 @@ class Database:
                             mx_record, port, mx_ip, mx_preferences, smtp_banner,
                             smtp_vrfy, catch_all, imap_status, imap_info,
                             pop3_status, pop3_info, server_policies, check_count,
-                            confidence_score
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            confidence_score, execution_time
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
                         data.get('timestamp', datetime.now().strftime("%d-%m-%y %H:%M:%S")),
                         email,
@@ -252,7 +255,8 @@ class Database:
                         str(data.get('pop3_info', '')),
                         data.get('server_policies', ''),
                          1,  # Initial check count
-                        data.get('confidence_score', 0)  # Confidence score
+                        data.get('confidence_score', 0),  # Confidence score
+                        data.get('execution_time', 0.0)   # Execution time
                     ))
                 conn.commit()
                 logger.info(f"Email check for {email} logged successfully")
@@ -297,7 +301,8 @@ class Database:
                     "POP3Info": "pop3_info",
                     "Policies": "server_policies",
                     "Count": "check_count",
-                    "Confidence": "confidence_score"
+                    "Confidence": "confidence_score",
+                    "ExecTime": "execution_time"
                 }
                 
                 # If we have selected columns, use them

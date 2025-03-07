@@ -169,7 +169,7 @@ class Config:
                 display_name="SMTP Port",      # Change this to customize port display
                 category=cat.TECH,
                 index=11,
-                show='N'
+                show='Y'
             ),
             "IP": LogColumn(
                 name="IP",                    # Don't change this
@@ -251,7 +251,7 @@ class Config:
                 name="Count",                 # Don't change this
                 display_name="Checks",         # Change this to customize check count display
                 category=cat.META,
-                index=23,                      # Update index to come after Policies
+                index=24,                      # Update index to make room for ExecTime
                 show='Y'
             ),
             "Confidence": LogColumn(
@@ -260,6 +260,13 @@ class Config:
                 category=cat.CORE,
                 index=22,
                 show='Y'
+            ),
+            "ExecTime": LogColumn(
+                name="ExecTime",               # Don't change this
+                display_name="Validation time",  # Change this to customize execution time display
+                category=cat.META,
+                index=23,                      # Position it after Confidence, before Count
+                show='Y'                       # Show by default
             )
         }
     )

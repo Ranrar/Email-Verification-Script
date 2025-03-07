@@ -67,6 +67,8 @@ verification methods.
      - SMTP, SMTP VRFY, and blacklist status
      - IMAP/POP3 availability
      - Additional information (SMTP banner, MX server IP, etc.)
+     - Confidence score (0-100)
+     - Validation time (execution time in seconds)
    - This database can be accessed and viewed from within the application
      using the 'show log' command.
 
@@ -88,6 +90,13 @@ verification methods.
    - Email server configurations can change frequently, and the script 
      does not guarantee real-time accuracy. It's recommended to verify 
      email addresses through multiple sources for precise accuracy.
+
+3. Performance Considerations:
+   - Validation time can vary significantly based on server response time,
+     network conditions, and security measures in place. Some email providers
+     intentionally slow down verification attempts as an anti-spam measure.
+   - The tool tracks and displays validation time for each email check,
+     helping you identify problematic or slow servers.
 
 ## Use Cases for Internal Use
 
@@ -116,6 +125,10 @@ including:
    - Maintains a database log of all email validation attempts for auditing email 
      systems and ensuring compliance with certain regulations or internal 
      standards.
+
+6. Performance Monitoring:
+   - Tracks validation time for different email providers, helping you identify
+     slow or problematic servers that might affect your email operations.
 
 ## Command Reference
 

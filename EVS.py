@@ -28,6 +28,32 @@ from database import Database
 from tabulate import tabulate
 from packages.logger.logger import P_Log
 
+_last_execution_time = 0.0
+
+def performance_monitor(func):
+    """Decorator to track function performance"""
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        # Start timing
+        start_time = time.time()
+        
+        # ALWAYS pass the start time as a keyword argument
+        # Make a copy of kwargs to avoid modifying the original
+        new_kwargs = kwargs.copy()
+        new_kwargs['_start_time'] = start_time
+        
+        # Call the original function with the new kwargs
+        result = func(*args, **new_kwargs)
+        
+        # Calculate execution time
+        execution_time = time.time() - start_time
+        
+        # Log performance for all functions
+        logger.info(f"Performance: {func.__name__} took {execution_time:.2f}s")
+            
+        return result
+    return wrapper
+
 # Optimization: Add periodic cleanup for TTL cache
 def ttl_cache(maxsize=128, ttl=600):
     """Time-based cache decorator with maximum size limit"""
@@ -450,7 +476,8 @@ def log_email_check(email, mx_record, spf_status, dkim_status, smtp_result, port
         'pop3_status': kwargs.get('pop3_status', ''),
         'pop3_banner': kwargs.get('pop3_banner', ''),
         'server_policies': check_server_policies(domain),
-        'confidence_score': kwargs.get('confidence_score', 0)  # Add this line
+        'confidence_score': kwargs.get('confidence_score', 0),
+        'execution_time': kwargs.get('execution_time', 0.0) 
     }
     
     try:
@@ -481,25 +508,8 @@ def check_smtp_with_port(domain, email, port):
                 return "Email likely exists"
     return "Could not verify email"
 
-def performance_monitor(func):
-    """Decorator to track function performance"""
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        start_time = time.time()
-        result = func(*args, **kwargs)
-        execution_time = time.time() - start_time
-        
-        # Log slow operations
-        if execution_time > 1.0:  # Log operations taking more than 1 second
-            logger.warning(f"Slow operation: {func.__name__} took {execution_time:.2f}s")
-        else:
-            logger.debug(f"Performance: {func.__name__} took {execution_time:.2f}s")
-            
-        return result
-    return wrapper
-
 @performance_monitor
-def validate_email(email):
+def validate_email(email, _start_time=None, **kwargs):
     """Enhanced email validation with confidence scoring"""
     logger.info(f"Starting validation for email: {email}")
     confidence_score = 0  # Initialize confidence score
@@ -507,10 +517,14 @@ def validate_email(email):
     try:
         # Check email format
         if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
+            # Calculate execution time even for early returns
+            execution_time = time.time() - _start_time if _start_time else 0.0
+            
             log_email_check(email, "Invalid Format", "N/A", "N/A", "Invalid Email Format",
                           "N/A", "N/A", error_message="Invalid email format", 
                           blacklist_info=check_blacklists(email),
-                          confidence_score=0)  # Zero confidence for invalid format
+                          confidence_score=0,
+                          execution_time=execution_time)  # Include execution time
             return "Invalid email format."
         else:
             confidence_score += 20  # Valid format gives 20 points
@@ -544,9 +558,13 @@ def validate_email(email):
         logger.debug(f"Checking MX records for {domain}")
         mx_records = get_mx_record(domain)
         if not mx_records:
+            # Calculate execution time even for early returns
+            execution_time = time.time() - _start_time if _start_time else 0.0
+            
             log_email_check(email, "No MX Records", "N/A", "N/A", "Could not verify email", "N/A", domain,
                           error_message="No MX records found", blacklist_info=blacklist_info, 
-                          disposable_status=disposable_status, confidence_score=confidence_score)
+                          disposable_status=disposable_status, confidence_score=confidence_score,
+                          execution_time=execution_time)  # Include execution time
             return "This domain cannot receive emails (no MX records)."
         else:
             confidence_score += 20  # Having valid MX records gives 20 points
@@ -626,6 +644,14 @@ def validate_email(email):
         # Update the result message with confidence information
         result_with_confidence = f"{smtp_result} (Confidence: {confidence_level}, {confidence_score}/100)"
         
+        # At the end, calculate the execution time ONCE
+        if _start_time is not None:
+            execution_time = time.time() - _start_time
+        else:
+            # Fallback if somehow _start_time wasn't passed
+            execution_time = 0.0
+            logger.warning(f"Missing _start_time for {email}, unable to calculate execution time")
+        
         log_email_check(
             email=email,
             mx_record=primary_mx,
@@ -647,12 +673,23 @@ def validate_email(email):
             pop3_status=pop3_status,
             pop3_banner=pop3_banner,
             server_policies=policy_info,
-            confidence_score=confidence_score  # Add this line
+            confidence_score=confidence_score,
+            execution_time=execution_time  # Use the calculated execution time
         )
+        
         logger.info(f"Validation complete for {email}: confidence score is {confidence_score}/100 ({get_confidence_level(confidence_score)})")
         return result_with_confidence
     except Exception as e:
+        # Calculate execution time even for exceptions
+        execution_time = time.time() - _start_time if _start_time else 0.0
+        
         logger.error(f"Error validating {email}: {str(e)}", exc_info=True)
+        
+        # Log the error with execution time
+        log_email_check(email, "Error", "N/A", "N/A", "Validation Error", "N/A", 
+                      email.split('@')[1] if '@' in email else "unknown",
+                      error_message=str(e),
+                      execution_time=execution_time)
         raise
 
 def validate_emails(emails):
