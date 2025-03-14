@@ -1,6 +1,4 @@
-  {
-    "schemaVersion": 1,
-    "label": "Build Status",
-    "message": "Success",
-    "color": "brightgreen"
-  }
+{
+  "status": "active",
+  "color": "green"
+}
