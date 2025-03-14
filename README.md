@@ -15,7 +15,8 @@ is actively in use, especially for critical applications. To ensure
 higher accuracy, it's recommended to use this tool alongside other 
 verification methods.
 
-![evs](https://github.com/user-attachments/assets/76002389-9fe9-4721-aa5b-ccce8001ddcc)
+![billede](https://github.com/user-attachments/assets/5032271f-23f5-4abf-b6fb-fa07b3892ddd)
+
 
 ## Key Features and Functions
 
