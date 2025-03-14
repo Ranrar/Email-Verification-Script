@@ -1,5 +1,3 @@
-![Status Badge](https://img.shields.io/badge/status-active-green.svg?url=https://raw.githubusercontent.com/Ranrar/EVS/refs/heads/main/badge_data.json&query=$.status&prefix=Status%20&suffix=%20Active&style=flat-square&logo=check-circle&logoColor=white&labelColor=blue)
-
 # Python Email Verification Script
 
 This Python-based email verification script is designed to help you 
