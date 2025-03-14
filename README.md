@@ -15,6 +15,22 @@ is actively in use, especially for critical applications. To ensure
 higher accuracy, it's recommended to use this tool alongside other 
 verification methods.
 
+## Addressing Windows Defender False Positive Detection
+
+Windows Defender may flag this Email Verification Script as "Trojan:Script/Wacatac.B!ml." This is a false positive and commonly occurs with Python scripts that perform network-related operations.
+Why This Happens
+
+Antivirus software, including Windows Defender, relies on heuristic analysis to detect potential threats. This script includes several features that can trigger false positives:
+
+   - Network connections – The script connects to SMTP servers, DNS servers, and other email-related services.
+   - Email processing functionality – Handling email addresses can resemble behaviors seen in spam-related malware.
+   - Socket operations – Direct socket connections are used for communication, a technique also seen in various types of software.
+   - ultiple server connection attempts – The script tests various email servers, which may resemble scanning behavior to security software.
+
+### Current Status
+
+I am actively investigating this issue to find potential workarounds or solutions. If you encounter any issues, feel free to open an issue or contribute to the discussion.
+
 ## Key Features and Functions
 
 1. Email Format Validation:
