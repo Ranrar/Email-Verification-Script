@@ -1,3 +1,5 @@
+https://img.shields.io/badge/label-value-color.svg?url=https://raw.githubusercontent.com/Ranrar/EVS/refs/heads/main/badge_data.json
+
 # Python Email Verification Script
 
 This Python-based email verification script is designed to help you 
