@@ -2,7 +2,7 @@ import os
 import logging
 import warnings
 from datetime import datetime
-from logging.handlers import RotatingFileHandler  # Add this import
+from logging.handlers import RotatingFileHandler
 
 # Silence warnings (optional)
 warnings.filterwarnings('ignore')
@@ -32,8 +32,11 @@ def P_Log(logger_name='evs', log_level=logging.DEBUG, log_to_console=False,
         os.makedirs(logs_dir)
         
     # Create log filename with date prefix for better organization
-    today = datetime.now().strftime("%d-%m-%y")
-    log_file = os.path.join(logs_dir, f'{logger_name}_{today}.log')
+    # Store the current date as a datetime object
+    current_date = datetime.now()
+    # Format the date only when creating the filename
+    today_formatted = current_date.strftime("%d-%m-%y")
+    log_file = os.path.join(logs_dir, f'{logger_name}_{today_formatted}.log')
     
     logger = logging.getLogger(logger_name)
     logger.setLevel(log_level)
@@ -43,6 +46,7 @@ def P_Log(logger_name='evs', log_level=logging.DEBUG, log_to_console=False,
         logger.handlers = []
     
     # File handler with rotation - logs everything at specified level
+    # Use ISO format in logs for better machine readability and standardization
     log_format = "%(asctime)s - Thread %(thread)d - %(levelname)s - %(message)s"
     
     # Replace FileHandler with RotatingFileHandler
@@ -52,7 +56,8 @@ def P_Log(logger_name='evs', log_level=logging.DEBUG, log_to_console=False,
         backupCount=backup_count
     )
     file_handler.setLevel(log_level)
-    file_formatter = logging.Formatter(log_format, datefmt="%d-%m-%y %H:%M:%S")
+    # Use ISO format for timestamps in log files (YYYY-MM-DD HH:MM:SS)
+    file_formatter = logging.Formatter(log_format, datefmt="%Y-%m-%d %H:%M:%S")
     file_handler.setFormatter(file_formatter)
     logger.addHandler(file_handler)
     
@@ -60,7 +65,9 @@ def P_Log(logger_name='evs', log_level=logging.DEBUG, log_to_console=False,
     if log_to_console:
         console_handler = logging.StreamHandler()
         console_handler.setLevel(log_level)
-        console_handler.setFormatter(file_formatter)
+        # For console display, you can use a more human-friendly format if needed
+        console_formatter = logging.Formatter(log_format, datefmt="%d-%m-%Y %H:%M:%S")
+        console_handler.setFormatter(console_formatter)
         logger.addHandler(console_handler)
     
     # Prevent log propagation to parent loggers

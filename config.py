@@ -1,329 +1,587 @@
-# config.py is a configuration file that contains settings and metadata for the script.
-
+import sqlite3
 import os
-from dataclasses import dataclass, field
-from enum import Enum
-from typing import Dict, List, Tuple, Optional
+import json
+import inspect
+from functools import lru_cache
+from datetime import datetime
+from packages.logger.logger import P_Log
 
-@dataclass
-class UserCredentials:
-    USER_NAME: str = None
-    USER_EMAIL: str = None
+# Initialize logger early
+logger = P_Log(logger_name='evs', log_to_console=False)
 
-    def __post_init__(self):
-        """Load credentials from database after initialization"""
-        from database import Database
+class ThreadPoolSettings:
+    def __init__(self, config_instance):
+        self._config = config_instance
+        
+    def __getattr__(self, name):
+        conn = self._config.connect()
+        if not conn:
+            return None
+            
         try:
-            db = Database(self)
-            users = db.get_users()
-            if users and len(users) > 0:
-                # Use the first user's credentials
-                self.USER_NAME = users[0][1]  # index 1 is name
-                self.USER_EMAIL = users[0][2]  # index 3 is email
-                self.USER_CREATION_TIME = users[0][3] # index 3 is creation time
-            else:
-                # Fallback defaults if no users found
-                self.USER_NAME = 'your_username'
-                self.USER_EMAIL = 'your@email.com'
-                self.USER_CREATION_TIME = 'Not available'
-        except Exception as e:
-            print(f"Warning: Could not load user credentials: {e}")
-            # Set fallback values
-            self.USER_NAME = 'your_username'
-            self.USER_EMAIL = 'your@email.com'
-            self.USER_CREATION_TIME = 'Not available'
-
-class cat(Enum):
-    """Short names for column categories"""
-    CORE = "Core Information"
-    SEC = "Security Checks"
-    TECH = "Technical Details"
-    PROT = "Protocol Status"
-    META = "Metadata"
-
-@dataclass
-class LogColumn:
-    """Configuration for a single log column"""
-    name: str                  # Internal name (for reference)
-    display_name: str          # Display name (shown in log)
-    category: cat              # Column category
-    index: int                 # Order in log display (lower numbers appear first)
-    show: str = 'Y'           # Y for visible, N for hidden
-
-    @property
-    def visible(self) -> bool:
-        return self.show.upper() == 'Y'
-
-@dataclass
-class Config:
-    """Main configuration class"""
-    # User credentials
-    USER_CREDENTIALS: UserCredentials = field(default_factory=UserCredentials)
-
-    # Rate Limiter Settings
-    RATE_LIMIT_REQUESTS: int = 10
-    RATE_LIMIT_WINDOW: int = 60
-    
-    # SMTP Settings
-    SMTP_TIMEOUT: int = 10
-    MAX_RETRIES: int = 3
-    PORTS_TO_TRY: List[int] = field(default_factory=lambda: [25, 587, 465])
-    CONNECTION_POOL_SIZE: int = 10
-
-    # Rate Limiting Settings
-    RATE_LIMITS: Dict[str, Tuple[int, int]] = field(
-        default_factory=lambda: {
-            'smtp_connections': (10, 60),    # 10 requests per minute
-            'dns_lookups': (100, 60),        # 100 requests per minute
-            'email_validations': (50, 60)    # 50 requests per minute
-        }
-    )
-
-    # Number of log entries to display (0 for unlimited)
-    LOG_DISPLAY_LIMIT: int = 50
-
-    # Log Columns Configuration - Change display_name values to customize how columns appear in logs
-    LOG_COLUMNS: Dict[str, LogColumn] = field(
-        default_factory=lambda: {
-            # Core Info - Basic information about the email check
-            "ID": LogColumn(
-                name="ID",                    # Don't change this
-                display_name="#",           # Change this to customize how ID appears
-                category=cat.META, 
-                index=0,
-                show='Y'                      # Y to show, N to hide
-            ),
-            "Time": LogColumn(
-                name="Time",                  # Don't change this
-                display_name="Time",          # Change this to customize timestamp display
-                category=cat.META,
-                index=1,
-                show='Y'
-            ),
-            "Email": LogColumn(
-                name="Email",                 # Internal name for database
-                display_name="E-mail Address", # Display name for logs
-                category=cat.CORE,
-                index=2,
-                show='Y'
-            ),
-            "Domain": LogColumn(
-                name="Domain",                # Don't change this
-                display_name="Domain Name",    # Change this to customize domain display
-                category=cat.CORE,
-                index=3,
-                show='N'
-            ),
-            "Result": LogColumn(
-                name="Result",                # Don't change this
-                display_name="SMTP Status",    # Change this to customize result display
-                category=cat.CORE,
-                index=4,
-                show='Y'
-            ),
-            "Error": LogColumn(
-                name="Error",                 # Don't change this
-                display_name="Error Info",     # Change this to customize error display
-                category=cat.CORE,
-                index=5,
-                show='N'
-            ),
-            
-            # Security - Email security check results
-            "Disposable": LogColumn(
-                name="Disposable",            # Don't change this
-                display_name="Disposable",     # Change this to customize disposable check display
-                category=cat.SEC,
-                index=6,
-                show='N'
-            ),
-            "SPF": LogColumn(
-                name="SPF",                   # Don't change this
-                display_name="SPF",           # Change this to customize SPF display
-                category=cat.SEC,
-                index=7,
-                show='N'
-            ),
-            "DKIM": LogColumn(
-                name="DKIM",                  # Don't change this
-                display_name="DKIM",          # Change this to customize DKIM display
-                category=cat.SEC,
-                index=8,
-                show='N'
-            ),
-            "Blacklist": LogColumn(
-                name="Blacklist",             # Don't change this
-                display_name="Blacklisted",    # Change this to customize blacklist display
-                category=cat.SEC,
-                index=9,
-                show='N'
-            ),
-            
-            # Technical - Server and protocol details
-            "MX": LogColumn(
-                name="MX",                    # Don't change this
-                display_name="Mail Server",    # Change this to customize MX display
-                category=cat.TECH,
-                index=10,
-                show='N'
-            ),
-            "Port": LogColumn(
-                name="Port",                  # Don't change this
-                display_name="SMTP Port",      # Change this to customize port display
-                category=cat.TECH,
-                index=11,
-                show='Y'
-            ),
-            "IP": LogColumn(
-                name="IP",                    # Don't change this
-                display_name="Server IP",      # Change this to customize IP display
-                category=cat.TECH,
-                index=12,
-                show='N'
-            ),
-            "MXPref": LogColumn(
-                name="MXPref",                # Don't change this
-                display_name="MX Priority",    # Change this to customize MX priority display
-                category=cat.TECH,
-                index=13,
-                show='N'
-            ),
-            "SMTP": LogColumn(
-                name="SMTP",                  # Don't change this
-                display_name="SMTP Info",      # Change this to customize SMTP info display
-                category=cat.TECH,
-                index=14,
-                show='N'
-            ),
-            "VRFY": LogColumn(
-                name="VRFY",                  # Don't change this
-                display_name="VRFY Support",   # Change this to customize VRFY display
-                category=cat.TECH,
-                index=15,
-                show='N'
-            ),
-            "Catch": LogColumn(
-                name="Catch",                 # Don't change this
-                display_name="Catch-all",      # Change this to customize catch-all display
-                category=cat.TECH,
-                index=16,
-                show='N'
-            ),
-            
-            # Protocol - Additional protocol checks
-            "IMAP": LogColumn(
-                name="IMAP",                  # Don't change this
-                display_name="IMAP",          # Change this to customize IMAP display
-                category=cat.PROT,
-                index=17,
-                show='N'
-            ),
-            "IMAPInfo": LogColumn(
-                name="IMAPInfo",              # Don't change this
-                display_name="IMAP Details",   # Change this to customize IMAP details display
-                category=cat.PROT,
-                index=18,
-                show='N'
-            ),
-            "POP3": LogColumn(
-                name="POP3",                  # Don't change this
-                display_name="POP3",          # Change this to customize POP3 display
-                category=cat.PROT,
-                index=19,
-                show='N'
-            ),
-            "POP3Info": LogColumn(
-                name="POP3Info",              # Don't change this
-                display_name="POP3 Details",   # Change this to customize POP3 details display
-                category=cat.PROT,
-                index=20,
-                show='N'
-            ),
-            
-            # Add the server_policies column here
-            "Policies": LogColumn(
-                name="Policies",              # Don't change this
-                display_name="Server Policies", # Change this to customize server policies display
-                category=cat.SEC,              # It's a security check
-                index=21,                      # Position it after POP3Info
-                show='Y'                       # Hidden by default
-            ),
-            
-            # Metadata - Additional information
-            "Count": LogColumn(
-                name="Count",                 # Don't change this
-                display_name="Checks",         # Change this to customize check count display
-                category=cat.META,
-                index=24,                      # Update index to make room for ExecTime
-                show='Y'
-            ),
-            "Confidence": LogColumn(
-                name="Confidence",             # Don't change this
-                display_name="Confidence score", # Change this to customize confidence score display
-                category=cat.CORE,
-                index=22,
-                show='Y'
-            ),
-            "ExecTime": LogColumn(
-                name="ExecTime",               # Don't change this
-                display_name="Validation time",  # Change this to customize execution time display
-                category=cat.META,
-                index=23,                      # Position it after Confidence, before Count
-                show='Y'                       # Show by default
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT value FROM thread_pool_settings WHERE setting_name = ?", 
+                (name,)
             )
-        }
-    )
+            result = cursor.fetchone()
+            conn.close()
+            
+            if result:
+                # Thread pool values are stored as integers
+                return int(result['value'])
+            return None
+        except Exception as e:
+            logger.warning(f"Error fetching thread_pool setting {name}: {e}")
+            return None
 
-    # Blacklist Settings
-    BLACKLISTED_DOMAINS: Dict[str, List[str]] = field(
-        default_factory=lambda: {
-            "blacklisted.com": ["Spamhaus", "Barracuda", "SpamCop"],
-            "baddomain.net": ["Spamhaus", "SORBS"],
-            "malicious.org": ["SpamCop", "Spamhaus"]
-        }
-    )
+class SmtpSettings:
+    def __init__(self, config_instance):
+        self._config = config_instance
+        
+    def __getattr__(self, name):
+        conn = self._config.connect()
+        if not conn:
+            return None
+            
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT value, data_type FROM smtp_settings WHERE setting_name = ?", 
+                (name,)
+            )
+            result = cursor.fetchone()
+            conn.close()
+            
+            if result:
+                value, data_type = result['value'], result['data_type']
+                if data_type == 'integer':
+                    return int(value)
+                elif data_type == 'float':
+                    return float(value) 
+                elif data_type == 'boolean':
+                    return value.lower() == 'true'
+                return value
+            return None
+        except Exception as e:
+            logger.warning(f"Error fetching smtp setting {name}: {e}")
+            return None
 
-    # Disposable Email Domains
-    DISPOSABLE_DOMAINS: List[str] = field(
-        default_factory=lambda: [
-            "mailinator.com",
-            "10minutemail.com",
-            "tempmail.com",
-            "temp-mail.org",
-            "guerrillamail.com",
-            "dispostable.com",
-            "yopmail.com",
-            "getnada.com",
-            "tempinbox.com"
-        ]
-    )
+class ImapSettings:
+    def __init__(self, config_instance):
+        self._config = config_instance
+        
+    def __getattr__(self, name):
+        conn = self._config.connect()
+        if not conn:
+            return None
+            
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT value, data_type FROM imap_settings WHERE setting_name = ?", 
+                (name,)
+            )
+            result = cursor.fetchone()
+            conn.close()
+            
+            if result:
+                value, data_type = result['value'], result['data_type']
+                if data_type == 'integer':
+                    return int(value)
+                elif data_type == 'float':
+                    return float(value)
+                elif data_type == 'boolean':
+                    return value.lower() == 'true'
+                return value
+            return None
+        except Exception as e:
+            logger.warning(f"Error fetching imap setting {name}: {e}")
+            return None
 
-    # User-Agent String
-    USER_AGENT: str = 'EmailVerificationScript/1.0 (https://github.com/Ranrar/EVS)'
+class Pop3Settings:
+    def __init__(self, config_instance):
+        self._config = config_instance
+        
+    def __getattr__(self, name):
+        conn = self._config.connect()
+        if not conn:
+            return None
+            
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT value, data_type FROM pop3_settings WHERE setting_name = ?", 
+                (name,)
+            )
+            result = cursor.fetchone()
+            conn.close()
+            
+            if result:
+                value, data_type = result['value'], result['data_type']
+                if data_type == 'integer':
+                    return int(value)
+                elif data_type == 'float':
+                    return float(value)
+                elif data_type == 'boolean':
+                    return value.lower() == 'true'
+                return value
+            return None
+        except Exception as e:
+            logger.warning(f"Error fetching pop3 setting {name}: {e}")
+            return None
 
-    # Database settings
-    DB_PATH = 'email_verification.db'
+class DnsSettings:
+    def __init__(self, config_instance):
+        self._config = config_instance
+        
+    def __getattr__(self, name):
+        conn = self._config.connect()
+        if not conn:
+            return None
+            
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT value, data_type FROM dns_settings WHERE setting_name = ?", 
+                (name,)
+            )
+            result = cursor.fetchone()
+            conn.close()
+            
+            if result:
+                value, data_type = result['value'], result['data_type']
+                if data_type == 'integer':
+                    return int(value)
+                elif data_type == 'float':
+                    return float(value)
+                elif data_type == 'boolean':
+                    return value.lower() == 'true'
+                return value
+            return None
+        except Exception as e:
+            logger.warning(f"Error fetching dns setting {name}: {e}")
+            return None
 
-    # Thread pool settings
-    MAX_WORKER_THREADS = 10  # Maximum number of worker threads for parallel email validation
-    CONNECTION_TIMEOUT = 15  # Connection timeout in seconds
-    THREAD_IDLE_TIMEOUT = 60  # How long to keep idle threads alive
+class RateLimits:
+    def __init__(self, config_instance):
+        self._config = config_instance
+        
+    def __getattr__(self, name):
+        conn = self._config.connect()
+        if not conn:
+            return None
+            
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT max_requests, time_window FROM rate_limits WHERE operation = ?", 
+                (name,)
+            )
+            result = cursor.fetchone()
+            conn.close()
+            
+            if result:
+                return {
+                    'max_requests': int(result['max_requests']),
+                    'time_window': int(result['time_window'])
+                }
+            return None
+        except Exception as e:
+            logger.warning(f"Error fetching rate limit {name}: {e}")
+            return None
 
-    def get_visible_columns(self) -> Dict[str, LogColumn]:
-        """Get only the visible columns"""
-        return {key: col 
-                for key, col in self.LOG_COLUMNS.items() 
-                if col.show.upper() == 'Y'}
+class CacheSettings:
+    def __init__(self, config_instance):
+        self._config = config_instance
+        
+    def __getattr__(self, name):
+        conn = self._config.connect()
+        if not conn:
+            return None
+            
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT max_size, ttl_seconds, cleanup_interval FROM cache_settings WHERE cache_name = ?", 
+                (name,)
+            )
+            result = cursor.fetchone()
+            conn.close()
+            
+            if result:
+                return {
+                    'max_size': int(result['max_size']),
+                    'ttl_seconds': int(result['ttl_seconds']),
+                    'cleanup_interval': int(result['cleanup_interval'])
+                }
+            return None
+        except Exception as e:
+            logger.warning(f"Error fetching cache setting {name}: {e}")
+            return None
 
-    def get_columns_by_category(self, category: cat) -> List[LogColumn]:
-        """Get all columns in a specific category"""
-        return [col for col in self.LOG_COLUMNS.values() 
-                if col.category == category]
+class ValidationScoring:
+    def __init__(self, config_instance):
+        self._config = config_instance
+        self._scores = {}
+        self._load_scores()
+    
+    def _load_scores(self):
+        """Load scoring values from database"""
+        try:
+            with sqlite3.connect(self._config.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute("SELECT check_name, score_value, is_penalty FROM validation_scoring")
+                rows = cursor.fetchall()
+                
+                for row in rows:
+                    value = row['score_value']
+                    if row['is_penalty'] == 1:
+                        value = -value
+                    self._scores[row['check_name']] = value
+        except Exception as e:
+            logger.error(f"Error loading validation scores: {e}")
+    
+    def get_score(self, check_name, default=0):
+        """Get score value for a specific check"""
+        return self._scores.get(check_name, default)
 
-    def toggle_column_visibility(self, column_key: str) -> bool:
-        """Toggle visibility of a specific column"""
-        if column_key in self.LOG_COLUMNS:
-            col = self.LOG_COLUMNS[column_key]
-            col.show = 'N' if col.show.upper() == 'Y' else 'Y'
-            return True
-        return False
+    def __getattr__(self, name):
+        """Allow attribute-style access to scores"""
+        return self.get_score(name)
+
+class SmtpPorts:
+    def __init__(self, config_instance):
+        self._config = config_instance
+    
+    def get_all(self, enabled_only=True):
+        """Get all SMTP ports ordered by priority"""
+        conn = self._config.connect()
+        if not conn:
+            return []
+            
+        try:
+            cursor = conn.cursor()
+            if enabled_only:
+                cursor.execute(
+                    "SELECT port, priority FROM smtp_ports WHERE enabled = 1 ORDER BY priority ASC"
+                )
+            else:
+                cursor.execute(
+                    "SELECT port, priority, enabled FROM smtp_ports ORDER BY priority ASC"
+                )
+            
+            result = cursor.fetchall()
+            conn.close()
+            
+            return [int(row['port']) for row in result]  # Returns a list of integers
+        except Exception as e:
+            logger.warning(f"Error fetching SMTP ports: {e}")
+            return []
+
+class AppSettings:
+    def __init__(self, config_instance):
+        self._config = config_instance
+        
+    def get(self, category, name=None, default=None):
+        """
+        Get a configuration setting by category and name.
+        If only category is provided, return all settings for that category.
+        Returns the default value if the setting is not found.
+        """
+        try:
+            # Use the parent config's database path
+            with sqlite3.connect(self._config.db_path) as conn:
+                cursor = conn.cursor()
+                
+                if name is None:
+                    # If only category is provided, return all settings for that category
+                    cursor.execute(
+                        "SELECT name, value, data_type FROM app_settings WHERE category = ?",
+                        (category,)
+                    )
+                    results = cursor.fetchall()
+                    
+                    if results:
+                        settings = {}
+                        for row in results:
+                            if isinstance(row, sqlite3.Row):
+                                setting_name = row['name']
+                                value = row['value']
+                                data_type = row['data_type']
+                            else:
+                                setting_name, value, data_type = row
+                            
+                            # Convert the value based on data type
+                            if data_type == 'integer':
+                                settings[setting_name] = int(value)
+                            elif data_type == 'float':
+                                settings[setting_name] = float(value)
+                            elif data_type == 'boolean':
+                                settings[setting_name] = value.lower() == 'true'
+                            elif data_type == 'json':
+                                settings[setting_name] = json.loads(value)
+                            else:
+                                settings[setting_name] = value
+                        
+                        return settings
+                    return default
+                else:
+                    # If both category and name are provided, return the specific setting
+                    cursor.execute(
+                        "SELECT value, data_type FROM app_settings WHERE category = ? AND name = ?",
+                        (category, name)
+                    )
+                    result = cursor.fetchone()
+                    
+                    if result:
+                        if isinstance(result, sqlite3.Row):
+                            value, data_type = result['value'], result['data_type']
+                        else:
+                            value, data_type = result
+                            
+                        # Convert the value based on data type
+                        if data_type == 'integer':
+                            return int(value)
+                        elif data_type == 'float':
+                            return float(value)
+                        elif data_type == 'boolean':
+                            return value.lower() == 'true'
+                        elif data_type == 'json':
+                            return json.loads(value)
+                        return value
+                    return default
+        except Exception as e:
+            logger.error(f"Error getting config value for {category}.{name if name else ''}: {e}")
+            return default
+
+class ConfidenceLevels:
+    def __init__(self, config_instance):
+        self._config = config_instance
+    
+    def get_level_for_score(self, score):
+        """Get the confidence level name for a given score"""
+        conn = self._config.connect()
+        if not conn:
+            return None
+            
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT level_name FROM confidence_levels WHERE ? BETWEEN min_threshold AND max_threshold", 
+                (score,)
+            )
+            result = cursor.fetchone()
+            conn.close()
+            
+            if result:
+                return result['level_name']
+            return None
+        except Exception as e:
+            logger.warning(f"Error getting confidence level for score {score}: {e}")
+            return None
+    
+    def get_all(self):
+        """Get all confidence levels"""
+        conn = self._config.connect()
+        if not conn:
+            return {}
+            
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT level_name, min_threshold, max_threshold, description FROM confidence_levels ORDER BY min_threshold ASC"
+            )
+            result = cursor.fetchall()
+            conn.close()
+            
+            levels = {}
+            for row in result:
+                levels[row['level_name']] = {
+                    'min': int(row['min_threshold']),
+                    'max': int(row['max_threshold']),
+                    'description': row['description']
+                }
+            return levels
+        except Exception as e:
+            logger.warning(f"Error fetching confidence levels: {e}")
+            return {}
+
+class DisposableDomains:
+    def __init__(self, config_instance):
+        self._config = config_instance
+    
+    def is_disposable(self, domain):
+        """Check if a domain is in the disposable domains list"""
+        conn = self._config.connect()
+        if not conn:
+            return False
+            
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT 1 FROM disposable_domains WHERE domain = ?", 
+                (domain.lower(),)
+            )
+            result = cursor.fetchone()
+            conn.close()
+            
+            return result is not None
+        except Exception as e:
+            logger.warning(f"Error checking if {domain} is disposable: {e}")
+            return False
+
+class BlacklistedDomains:
+    def __init__(self, config_instance):
+        self._config = config_instance
+    
+    def is_blacklisted(self, domain):
+        """Check if a domain is blacklisted and return sources"""
+        conn = self._config.connect()
+        if not conn:
+            return False, []
+            
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT source FROM blacklisted_domains WHERE domain = ?", 
+                (domain.lower(),)
+            )
+            results = cursor.fetchall()
+            conn.close()
+            
+            if results:
+                sources = [row['source'] for row in results]
+                return True, sources
+            return False, []
+        except Exception as e:
+            logger.warning(f"Error checking if {domain} is blacklisted: {e}")
+            return False, []
+
+class EmailRecordFields:
+    def __init__(self, config_instance):
+        self._config = config_instance
+    
+    def get_all(self):
+        """Get all field definitions"""
+        conn = self._config.connect()
+        if not conn:
+            return {}
+            
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """SELECT name, display_name, category, display_index, visible, description 
+                   FROM email_records_field_definitions 
+                   ORDER BY display_index ASC"""
+            )
+            results = cursor.fetchall()
+            conn.close()
+            
+            fields = {}
+            for row in results:
+                fields[row['name']] = {
+                    'display': row['display_name'],
+                    'category': row['category'],
+                    'index': row['display_index'],
+                    'visible': row['visible'] == 'Y',
+                    'description': row['description']
+                }
+            return fields
+        except Exception as e:
+            logger.warning(f"Error fetching email record fields: {e}")
+            return {}
+
+class config:
+    """Direct access to configuration variables stored in the EVS.db database"""
+    
+    _instance = None
+    
+    def __new__(cls, db_path=None):
+        """Singleton pattern to ensure only one config instance exists"""
+        if cls._instance is None:
+            cls._instance = super(config, cls).__new__(cls)
+            cls._instance._initialized = False
+        return cls._instance
+    
+    def __init__(self, db_path=None):
+        """Initialize with optional custom database path"""
+        if self._initialized:
+            return
+            
+        # Default database path if not provided
+        if not db_path:
+            self.db_dir = os.path.join(os.getcwd(), 'DB')
+            self.db_path = os.path.join(self.db_dir, 'EVS.db')
+        else:
+            self.db_path = db_path
+        
+        # Add a flag to track database state
+        self._db_available = self.db_exists()
+        
+        # If database doesn't exist, log once instead of on every access
+        if not self._db_available:
+            logger.warning("Database does not exist or is empty.")
+    
+        # Initialize settings accessors
+        self.thread_pool_setting = ThreadPoolSettings(self)
+        self.smtp_setting = SmtpSettings(self)
+        self.smtp_ports = SmtpPorts(self)
+        self.imap_setting = ImapSettings(self)
+        self.pop3_setting = Pop3Settings(self)
+        self.dns_setting = DnsSettings(self)
+        self.rate_limit = RateLimits(self)
+        self.cache_setting = CacheSettings(self)
+        self.app_setting = AppSettings(self)
+        self.validation_scoring = ValidationScoring(self)
+        self.confidence_level = ConfidenceLevels(self)
+        self.disposable_domain = DisposableDomains(self)
+        self.blacklisted_domain = BlacklistedDomains(self)
+        self.email_record_field = EmailRecordFields(self)
+        
+        self._initialized = True
+        
+        logger.info(f"Config initialized with database path {self.db_path}")
+    
+    def db_exists(self):
+        """Check if database file exists and has content"""
+        return os.path.exists(self.db_path) and os.path.getsize(self.db_path) > 0
+    
+    def connect(self):
+        """Create a database connection only if DB exists"""
+        # Check if database exists first
+        if not self._db_available and not self.db_exists():
+            return None
+            
+        # If we reach here, database might have been created since initialization
+        if not self._db_available:
+            self._db_available = True
+        
+        try:
+            conn = sqlite3.connect(self.db_path)
+            conn.row_factory = sqlite3.Row  # Enable column access by name
+            return conn
+        except sqlite3.Error as e:
+            logger.error(f"Database connection error: {e}")
+            return None
+    
+    def refresh(self):
+        """Refresh any internal caches"""
+        pass
+
+    def get_active_user(self):
+        """Get the currently active user"""
+        caller = inspect.currentframe().f_back.f_code.co_name
+        logger.info(f"get_active_user method called from {caller}")
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT id, name, email, created_at FROM users WHERE is_active = 1 LIMIT 1")
+                user = cursor.fetchone()
+                if user:
+                    return {"id": user[0], "name": user[1], "email": user[2], "created_at": user[3]}
+                return None
+        except Exception as e:
+            logger.error(f"Error getting active user: {e}")
+            return None

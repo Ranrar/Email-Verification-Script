@@ -3,11 +3,11 @@
 cd /d "%~dp0"
 
 :: Ensure the script exists and run it
-if exist "EVS.py" (
-    echo Running EVS.py...
-    py EVS.py
+if exist "main.py" (
+    echo Running EVS...
+    py main.py
 ) else (
-    echo EVS.py not found in the current directory.
+    echo main.py not found in the current directory.
 )
 
 pause
