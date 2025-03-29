@@ -1,4 +1,4 @@
-# Python Email Verification Script
+# Email Verification Script
 
 This Python-based email verification script is designed to help you 
 validate email addresses by analyzing various technical aspects of 
@@ -14,6 +14,8 @@ should not be solely relied upon for verifying whether an email address
 is actively in use, especially for critical applications. To ensure 
 higher accuracy, it's recommended to use this tool alongside other 
 verification methods.
+
+![EVS-menu](https://github.com/user-attachments/assets/253788b2-c2a5-4329-968f-302a17fe1321)
 
 ## Core Features
 
