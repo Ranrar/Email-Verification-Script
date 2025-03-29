@@ -4,10 +4,10 @@ import json
 import inspect
 from functools import lru_cache
 from datetime import datetime
-from packages.logger.logger import P_Log
+from packages.logger.logger import P_Log, DEFAULT_LOGGER_NAME
 
 # Initialize logger early
-logger = P_Log(logger_name='evs', log_to_console=False)
+logger = P_Log(log_to_console=False)
 
 class ThreadPoolSettings:
     def __init__(self, config_instance):
@@ -166,8 +166,43 @@ class DnsSettings:
 class RateLimits:
     def __init__(self, config_instance):
         self._config = config_instance
+        self._default_max_requests = None
+        self._default_time_window = None
+        self._load_defaults()
+    
+    def _load_defaults(self):
+        """Load default rate limit values"""
+        conn = self._config.connect()
+        if not conn:
+            return
+            
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT max_requests, time_window FROM rate_limits WHERE operation = 'default'"
+            )
+            result = cursor.fetchone()
+            conn.close()
+            
+            if result:
+                self._default_max_requests = int(result['max_requests'])
+                self._default_time_window = int(result['time_window'])
+                logger.debug(f"Loaded default rate limits: {self._default_max_requests} requests per {self._default_time_window}s")
+        except Exception as e:
+            logger.warning(f"Error loading default rate limits: {e}")
+    
+    @property
+    def max_requests(self):
+        """Get default max_requests value"""
+        return self._default_max_requests
+    
+    @property
+    def time_window(self):
+        """Get default time_window value"""
+        return self._default_time_window
         
     def __getattr__(self, name):
+        """Get operation-specific rate limits"""
         conn = self._config.connect()
         if not conn:
             return None
@@ -493,6 +528,154 @@ class EmailRecordFields:
             logger.warning(f"Error fetching email record fields: {e}")
             return {}
 
+class BatchInfo:
+    def __init__(self, config_instance):
+        self._config = config_instance
+    
+    def create_batch(self, name=None, source=None, total_emails=0, settings_snapshot=None):
+        """Create a new batch and return its ID"""
+        conn = self._config.connect()
+        if not conn:
+            return None
+            
+        try:
+            cursor = conn.cursor()
+            now = datetime.now().isoformat()
+            
+            # Convert settings_snapshot to JSON string if provided
+            settings_json = None
+            if settings_snapshot:
+                settings_json = json.dumps(settings_snapshot)
+            
+            cursor.execute(
+                """INSERT INTO batch_info 
+                   (name, source, created_at, total_emails, status, settings_snapshot) 
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (name, source, now, total_emails, 'queued', settings_json)
+            )
+            conn.commit()
+            batch_id = cursor.lastrowid
+            conn.close()
+            
+            logger.info(f"Created new batch {batch_id}: {name} with {total_emails} emails")
+            return batch_id
+        except Exception as e:
+            logger.error(f"Error creating batch: {e}")
+            return None
+    
+    def update_batch_status(self, batch_id, status, processed=None, success=None, 
+                           failed=None, error_message=None, completed=False):
+        """Update the status and stats of a batch"""
+        conn = self._config.connect()
+        if not conn:
+            return False
+            
+        try:
+            cursor = conn.cursor()
+            
+            # Build the query dynamically based on provided arguments
+            update_fields = ["status = ?"]
+            params = [status]
+            
+            if processed is not None:
+                update_fields.append("processed_emails = ?")
+                params.append(processed)
+                
+            if success is not None:
+                update_fields.append("success_count = ?")
+                params.append(success)
+                
+            if failed is not None:
+                update_fields.append("failed_count = ?")
+                params.append(failed)
+                
+            if error_message is not None:
+                update_fields.append("error_message = ?")
+                params.append(error_message)
+                
+            if completed:
+                update_fields.append("completed_at = ?")
+                params.append(datetime.now().isoformat())
+            
+            # Construct the final query
+            query = f"UPDATE batch_info SET {', '.join(update_fields)} WHERE id = ?"
+            params.append(batch_id)
+            
+            cursor.execute(query, params)
+            conn.commit()
+            conn.close()
+            
+            logger.debug(f"Updated batch {batch_id} status to {status}")
+            return True
+        except Exception as e:
+            logger.error(f"Error updating batch {batch_id}: {e}")
+            return False
+    
+    def get_batch(self, batch_id):
+        """Get batch details by ID"""
+        conn = self._config.connect()
+        if not conn:
+            return None
+            
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM batch_info WHERE id = ?", (batch_id,))
+            result = cursor.fetchone()
+            conn.close()
+            
+            if not result:
+                return None
+                
+            # Convert to dictionary
+            batch = dict(result)
+            
+            # Parse settings_snapshot if it exists
+            if batch.get('settings_snapshot'):
+                try:
+                    batch['settings_snapshot'] = json.loads(batch['settings_snapshot'])
+                except:
+                    pass  # Keep as string if JSON parsing fails
+                    
+            return batch
+        except Exception as e:
+            logger.error(f"Error fetching batch {batch_id}: {e}")
+            return None
+    
+    def list_batches(self, limit=100, status=None, order_by="created_at DESC"):
+        """List batches with optional filtering"""
+        conn = self._config.connect()
+        if not conn:
+            return []
+            
+        try:
+            cursor = conn.cursor()
+            
+            query = "SELECT id, name, source, created_at, completed_at, total_emails, " \
+                    "processed_emails, success_count, failed_count, status " \
+                    "FROM batch_info"
+                    
+            params = []
+            
+            # Add status filter if provided
+            if status:
+                query += " WHERE status = ?"
+                params.append(status)
+                
+            # Add ordering
+            query += f" ORDER BY {order_by} LIMIT ?"
+            params.append(limit)
+            
+            cursor.execute(query, params)
+            results = cursor.fetchall()
+            conn.close()
+            
+            # Convert to list of dictionaries
+            batches = [dict(row) for row in results]
+            return batches
+        except Exception as e:
+            logger.error(f"Error listing batches: {e}")
+            return []
+
 class config:
     """Direct access to configuration variables stored in the EVS.db database"""
     
@@ -539,10 +722,11 @@ class config:
         self.disposable_domain = DisposableDomains(self)
         self.blacklisted_domain = BlacklistedDomains(self)
         self.email_record_field = EmailRecordFields(self)
+        self.batch_info = BatchInfo(self)  # Add the new BatchInfo class
         
         self._initialized = True
         
-        logger.info(f"Config initialized with database path {self.db_path}")
+        # logger.info(f"Config initialized with database path {self.db_path}")
     
     def db_exists(self):
         """Check if database file exists and has content"""
@@ -585,3 +769,38 @@ class config:
         except Exception as e:
             logger.error(f"Error getting active user: {e}")
             return None
+
+    def refresh_db_state(self):
+        """Refreshes database state and clears cached values"""
+        try:
+            # Close any existing connections that might be cached
+            logger.info("Refreshing database state and clearing caches")
+            
+            # Re-initialize settings accessors to reset their state
+            self._db_available = self.db_exists()
+            
+            # Re-initialize all settings accessors to force them to reload data
+            self.thread_pool_setting = ThreadPoolSettings(self)
+            self.smtp_setting = SmtpSettings(self)
+            self.smtp_ports = SmtpPorts(self)
+            self.imap_setting = ImapSettings(self)
+            self.pop3_setting = Pop3Settings(self)
+            self.dns_setting = DnsSettings(self)
+            self.rate_limit = RateLimits(self)
+            self.cache_setting = CacheSettings(self)
+            self.app_setting = AppSettings(self)
+            self.validation_scoring = ValidationScoring(self)
+            self.confidence_level = ConfidenceLevels(self)
+            self.disposable_domain = DisposableDomains(self)
+            self.blacklisted_domain = BlacklistedDomains(self)
+            self.email_record_field = EmailRecordFields(self)
+            self.batch_info = BatchInfo(self)  # Reinitialize batch info
+            
+            # Explicitly reload validation scores
+            self.validation_scoring._load_scores()
+            
+            logger.info("Database state refreshed and caches cleared")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to refresh database state: {e}")
+            return False

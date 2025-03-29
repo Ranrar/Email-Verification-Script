@@ -15,23 +15,7 @@ is actively in use, especially for critical applications. To ensure
 higher accuracy, it's recommended to use this tool alongside other 
 verification methods.
 
-## Addressing Windows Defender False Positive Detection
-
-Windows Defender may flag this Email Verification Script as "Trojan:Script/Wacatac.B!ml." This is a false positive and commonly occurs with Python scripts that perform network-related operations.
-Why This Happens
-
-Antivirus software, including Windows Defender, relies on heuristic analysis to detect potential threats. This script includes several features that can trigger false positives:
-
-   - Network connections – The script connects to SMTP servers, DNS servers, and other email-related services.
-   - Email processing functionality – Handling email addresses can resemble behaviors seen in spam-related malware.
-   - Socket operations – Direct socket connections are used for communication, a technique also seen in various types of software.
-   - ultiple server connection attempts – The script tests various email servers, which may resemble scanning behavior to security software.
-
-### Current Status
-
-I am actively investigating this issue to find potential workarounds or solutions. If you encounter any issues, feel free to open an issue or contribute to the discussion.
-
-## Key Features and Functions
+## Core Features
 
 1. Email Format Validation:
    The script first checks whether the email address adheres to a 
@@ -74,19 +58,83 @@ I am actively investigating this issue to find potential workarounds or solution
      connections on common SSL ports (993 for IMAP, 995 for POP3), 
      providing clues about the server's configuration and security.
 
-7. Logging:
-   - All results are stored in a SQLite database with details such as:
-     - Timestamp
-     - Email address and domain
-     - MX record and port used
-     - SPF and DKIM status
-     - SMTP, SMTP VRFY, and blacklist status
-     - IMAP/POP3 availability
-     - Additional information (SMTP banner, MX server IP, etc.)
-     - Confidence score (0-100)
-     - Validation time (execution time in seconds)
-   - This database can be accessed and viewed from within the application
-     using the 'show log' command.
+## Advanced Features
+
+7. Confidence Scoring System:
+   - Each validation includes a detailed confidence score (0-100) that evaluates email validity
+   - Scoring levels include: Very High (90-100), High (70-89), Medium (50-69), Low (30-49), Very Low (0-29)
+   - Customizable scoring weights for different validation aspects
+
+8. Batch Processing:
+   - Import and validate lists of email addresses from external files
+   - Track batch processing with detailed statistics (total emails, success rate, failures)
+   - Store batch validation history with timestamps and settings snapshots
+   - Review batch results with comprehensive reporting
+
+9. Logging and Database Storage:
+   - All validation results stored in SQLite database with complete browsing capabilities
+   - Interactive record viewer with "Show All" and "Custom Filter" views
+   - Filter records by date range, domain, confidence level, or email text
+   - Column visibility options and sorting for personalized data viewing
+   - Access logs via GUI interface or 'show log' commands
+
+10. Settings Management:
+    - Configure validation parameters and scoring weights
+    - Customize confidence thresholds and validation behavior
+    - Adjust performance settings for different environments
+    - Note: The Settings menu UI exists but is not yet fully functional
+
+11. Cross-Platform Terminal Interface:
+    - Compatible with Windows, macOS, and Linux
+    - Unified command interface across platforms
+    - Terminal UI components for interactive operation
+
+12. Comprehensive Export System:
+    - Multiple filtering options: Date Range, Batch, Domain, Confidence Level
+    - Field category selection (Metadata, Core, Security, Technical, Protocol)
+    - CSV and JSON export formats supported
+    - Customizable filenames with relevant metadata
+
+## Technical Implementation
+
+13. Performance Optimization:
+    - Smart TTL caching system for DNS and lookup operations
+    - Configurable cache settings per operation type
+    - Performance monitoring with execution time tracking
+    - Rate limiting to prevent being blocked by email servers
+
+14. Domain Protection System:
+    - Temporary blocking of domains that consistently reject connection attempts
+    - Automatic cooldown periods with configurable duration
+    - Protection against getting blacklisted by email servers
+
+15. Advanced Rate Limiting:
+    - Per-nameserver tracking using sliding window algorithm
+    - Separate rate limits for different operation types
+    - Automatic throttling to prevent server blocking
+
+16. Nameserver Rotation and Failover:
+    - Automatic rotation through multiple DNS nameservers
+    - Smart failover when servers are unresponsive
+    - Improved resilience for DNS operations
+
+17. Resource Management:
+    - Graceful shutdown process that properly closes connections
+    - SMTP connection pooling for improved performance
+    - Automatic cleanup of cached resources
+    - Memory optimization for long-running processes
+
+18. Error Handling and Reporting:
+    - Detailed error categorization for all operations
+    - Contextual error reporting with suggested remediation
+    - User-friendly error messages with specific details
+    - Success dialogs with operation statistics
+
+19. Dynamic DNS Configuration:
+    - Nameserver health monitoring and automatic disabling of unresponsive servers
+    - Custom resolver timeouts with configurable settings
+    - Parallel DNS query support for performance-critical operations
+    - Adaptive timeout adjustments based on server response patterns
 
 ## What to Expect
 
@@ -98,9 +146,7 @@ I am actively investigating this issue to find potential workarounds or solution
    - Catch-All Detection: Even if an email doesn't explicitly exist, it 
      could still be accepted if the domain has a catch-all email configured.
    - Blacklist Information: The blacklist check relies on a predefined 
-     list and may not catch all blacklisted domains. For critical 
-     applications, consider using a more comprehensive and up-to-date 
-     blacklist database.
+     list and may not catch all blacklisted domains.
 
 2. Dynamic Email Systems:
    - Email server configurations can change frequently, and the script 
@@ -109,10 +155,8 @@ I am actively investigating this issue to find potential workarounds or solution
 
 3. Performance Considerations:
    - Validation time can vary significantly based on server response time,
-     network conditions, and security measures in place. Some email providers
-     intentionally slow down verification attempts as an anti-spam measure.
-   - The tool tracks and displays validation time for each email check,
-     helping you identify problematic or slow servers.
+     network conditions, and security measures in place.
+   - The tool tracks and displays validation time for each email check.
 
 ## Use Cases for Internal Use
 
@@ -151,12 +195,43 @@ including:
 The script supports several commands:
 
 - 'help'      - Display help message
-- 'show log'  - Display verification history from the database
-- 'clear log' - Delete all content from the log database
-- 'clear'     - Clear the terminal window
-- 'read more' - Learn more about features, functions, and use cases
+- 'show log'  - Display email validation history with results
+- 'show log all' - Display all email records including batch records
+- 'show batch' - List all batches and prompt for a batch ID to view
+- 'show batch <ID>' - Display all records from a specific batch directly
+- 'clear log' - Delete all non-batch validation history
+- 'clear log all' - Delete ALL validation history including batch records
+- 'clear batch' - Delete a specific batch and its records
+- 'settings'  - Not working yet
+- 'clear'     - Clear the terminal screen
+- 'read more' - Open the detailed documentation in your browser
 - 'who am i'  - Display current user information
-- 'exit'      - Quit the program
+- 'refresh'   - Refresh database connection and clear cache
+- 'debug log' - Show raw database records for debugging
+- 'exit'      - Return to main menu
 
 You can also enter one or more email addresses separated by commas to check their validity.
 For example: test@example.com, user@domain.com
+
+## Future Updates
+
+The following features are planned for upcoming releases:
+
+1. Full Settings Menu Implementation:
+   - Complete GUI settings interface with working save/apply functionality
+   - Profile-based configurations for different validation scenarios
+   - Import/export of configuration profiles
+
+2. Background Processing Enhancements:
+   - Fully asynchronous batch processing
+   - Pause/resume functionality for long-running jobs
+
+3. Database Encryption
+
+4. Enhanced Statistics and Reporting
+
+5. Extended Command System:
+   - Additional command options and parameters
+   - Command aliases for common operations
+
+6. API Integration
