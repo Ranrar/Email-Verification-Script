@@ -9,7 +9,8 @@ an email address is likely valid, invalid, or problematic, logging the
 results for future reference. While the tool provides valuable insights 
 into email address validity, it's important to note that due to the 
 complex and dynamic nature of email systems, it is never 100% accurate. 
-
+<br>
+</br>
 This script is a robust internal validation tool and can offer insights 
 into the technical setup of email addresses and domains. However, it 
 should not be solely relied upon for verifying whether an email address 
@@ -20,7 +21,7 @@ verification methods.
 ![EVS-menu](https://github.com/user-attachments/assets/253788b2-c2a5-4329-968f-302a17fe1321)
 
 ## Core Features
-
+<details>
 1. Email Format Validation:
    The script first checks whether the email address adheres to a 
    standard format (e.g., user@domain.com). Invalid emails are logged 
@@ -61,9 +62,10 @@ verification methods.
    - Tests if the domain's mail server supports secure IMAP and POP3 
      connections on common SSL ports (993 for IMAP, 995 for POP3), 
      providing clues about the server's configuration and security.
+</details>
 
 ## Advanced Features
-
+<details>
 7. Confidence Scoring System:
    - Each validation includes a detailed confidence score (0-100) that evaluates email validity
    - Scoring levels include: Very High (90-100), High (70-89), Medium (50-69), Low (30-49), Very Low (0-29)
@@ -98,9 +100,10 @@ verification methods.
     - Field category selection (Metadata, Core, Security, Technical, Protocol)
     - CSV and JSON export formats supported
     - Customizable filenames with relevant metadata
-
+</details>
+   
 ## Technical Implementation
-
+<details>
 13. Performance Optimization:
     - Smart TTL caching system for DNS and lookup operations
     - Configurable cache settings per operation type
@@ -139,9 +142,10 @@ verification methods.
     - Custom resolver timeouts with configurable settings
     - Parallel DNS query support for performance-critical operations
     - Adaptive timeout adjustments based on server response patterns
+</details>
 
 ## What to Expect
-
+<details>
 1. Accuracy Limitations:
    - No Guarantees: The accuracy of email verification is never 100%. 
      Some mail servers may block commands (like VRFY or RCPT), making it 
@@ -161,9 +165,10 @@ verification methods.
    - Validation time can vary significantly based on server response time,
      network conditions, and security measures in place.
    - The tool tracks and displays validation time for each email check.
-
+</details>
+   
 ## Use Cases for Internal Use
-
+<details>
 This email verification tool can be used internally for various purposes, 
 including:
 
@@ -193,9 +198,10 @@ including:
 6. Performance Monitoring:
    - Tracks validation time for different email providers, helping you identify
      slow or problematic servers that might affect your email operations.
+</details>
 
 ## Command Reference
-
+<details>
 The script supports several commands:
 
 - 'help'      - Display help message
@@ -216,9 +222,10 @@ The script supports several commands:
 
 You can also enter one or more email addresses separated by commas to check their validity.
 For example: test@example.com, user@domain.com
+</details>
 
 ## Future Updates
-
+<details>
 The following features are planned for upcoming releases:
 
 1. Full Settings Menu Implementation:
@@ -239,3 +246,4 @@ The following features are planned for upcoming releases:
    - Command aliases for common operations
 
 6. API Integration
+</details>
