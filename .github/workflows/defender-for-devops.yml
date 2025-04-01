@@ -16,7 +16,7 @@
 # and provide permission before this can report data back to azure.
 # Read the official documentation here : https://learn.microsoft.com/en-us/azure/defender-for-cloud/quickstart-onboard-github
 
-name: "Microsoft Defender For Devops"
+name: "Microsoft Defender For DevOps"
 
 on:
   push:
@@ -43,15 +43,15 @@ jobs:
         run: pip install bandit
 
       - name: Run Microsoft Defender for DevOps
-        uses: microsoft/security-devops-action@latest
+        uses: microsoft/security-devops-action@v1
         id: msdo
         with:
           tools: Bandit
         
       - name: Debug outputs
-        run: echo "SARIF file: ${{ steps.msdo.outputs.sarif_file }}"
+        run: echo "${{ toJson(steps.msdo.outputs) }}"
 
       - name: Upload results to Security tab
         uses: github/codeql-action/upload-sarif@v2
         with:
-          sarif_file: ${{ steps.msdo.outputs.sarif_file }}
+          sarif_file: ${{ steps.msdo.outputs.sarifFile }}
