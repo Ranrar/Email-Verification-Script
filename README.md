@@ -1,4 +1,4 @@
-[![CodeQL Advanced](https://github.com/Ranrar/EVS/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/Ranrar/EVS/actions/workflows/codeql.yml)
+[![CodeQL Advanced](https://github.com/Ranrar/EVS/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/Ranrar/EVS/actions/workflows/codeql.yml) [![Microsoft Defender For DevOps](https://github.com/Ranrar/EVS/actions/workflows/defender-for-devops.yml/badge.svg)](https://github.com/Ranrar/EVS/actions/workflows/defender-for-devops.yml)
 
 # Email Verification Script
 
