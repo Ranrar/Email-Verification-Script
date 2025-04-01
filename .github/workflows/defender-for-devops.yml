@@ -32,10 +32,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@latest
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v3
         with:
           python-version: '3.x'
 
@@ -43,7 +43,7 @@ jobs:
         run: pip install bandit
 
       - name: Run Microsoft Defender for DevOps
-        uses: microsoft/security-devops-action@v1
+        uses: microsoft/security-devops-action@latest
         id: msdo
         with:
           tools: Bandit
@@ -52,6 +52,6 @@ jobs:
         run: echo "${{ toJson(steps.msdo.outputs) }}"
 
       - name: Upload results to Security tab
-        uses: github/codeql-action/upload-sarif@v2
+        uses: github/codeql-action/upload-sarif@vlatest
         with:
           sarif_file: ${{ steps.msdo.outputs.sarifFile }}
