@@ -1,3 +1,5 @@
+[![CodeQL Advanced](https://github.com/Ranrar/EVS/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/Ranrar/EVS/actions/workflows/codeql.yml)
+
 # Email Verification Script
 
 This Python-based email verification script is designed to help you 
