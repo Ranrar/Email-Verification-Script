@@ -1206,6 +1206,7 @@ def display_logs_custom_gui(date_range=None, domain_filter=None, confidence_leve
                         dt = datetime.fromisoformat(value)
                         value = dt.strftime("%d-%m-%y %H:%M")
                     except:
+                        logger.debug(f"Error formatting timestamp: {value}")
                         pass
                         
                 # Format confidence score with level
@@ -1547,6 +1548,7 @@ def display_logs_custom():
                         dt = datetime.fromisoformat(value)
                         value = dt.strftime("%d-%m-%y %H:%M")
                     except:
+                        logger.debug(f"Error formatting timestamp: {value}")
                         pass
                         
                 # Format confidence score with level
@@ -1703,6 +1705,7 @@ def display_logs_all():
                         dt = datetime.fromisoformat(value)
                         value = dt.strftime("%d-%m-%y %H:%M")
                     except:
+                        logger.debug("Error formatting timestamp: %s", value)
                         pass
                         
                 # Format confidence score with level
@@ -1846,6 +1849,7 @@ def display_logs(batch_id):
                         dt = datetime.fromisoformat(value)
                         value = dt.strftime("%d-%m-%y %H:%M")
                     except:
+                        logger.debug("Error formatting timestamp: %s", value)
                         pass
                         
                 # Format confidence score with level
