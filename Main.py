@@ -34,7 +34,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 LoggerManager.cleanup_old_logs(max_days=30)
 LoggerManager.organize_log_archive()
 
-logger = P_Log(log_to_console=False)
+logger = P_Log(log_to_console=False, split_by_level=True)
 
 # Define path for the state file
 STATE_FILE = os.path.join(os.getcwd(), 'app_state.json')
@@ -50,7 +50,7 @@ def mark_app_running():
     try:
         with open(STATE_FILE, 'w') as f:
             json.dump(state, f)
-        logger.debug("Application state file created - marked as running")
+        logger.info("Application started")
     except Exception as e:
         logger.error(f"Failed to create state file: {e}")
 
@@ -60,7 +60,7 @@ def mark_clean_exit():
     try:
         if os.path.exists(STATE_FILE):
             os.remove(STATE_FILE)
-            logger.debug("Application state file removed - clean exit")
+            logger.info("Application shutdown gracefully")
     except Exception as e:
         logger.error(f"Failed to remove state file: {e}")
 
@@ -73,9 +73,11 @@ def check_previous_crash():
                 state = json.load(f)
             logger.warning(f"Previous session appears to have terminated abnormally at {state.get('start_time', 'unknown time')}")
             return True
-        except Exception:
-            # If file exists but can't be read, still assume crash
-            logger.warning("Previous session appears to have crashed (corrupted state file)")
+        except json.JSONDecodeError:
+            logger.warning("Previous session crashed (corrupted state file)")
+            return True
+        except IOError as e:
+            logger.warning(f"Previous session crashed (cannot read state file: {e})")
             return True
     return False
 
@@ -1131,9 +1133,6 @@ def exit_program(button: urwid.Button = None) -> None:
     try:
         # Mark clean exit
         mark_clean_exit()
-        
-        # Log exit message
-        logger.info("Application shutting down cleanly")
         
         # Shutdown Core resources - Core.shutdown() already calls refresh_db_state()
         if 'Core' in globals() and hasattr(Core, 'shutdown') and callable(Core.shutdown):
@@ -3248,24 +3247,21 @@ def show_batch_results(batch_id):
     old_stdout = sys.stdout
     result_capture = io.StringIO()
     sys.stdout = result_capture
-    
+
     try:
-        # Call the Core.display_logs function to show all email records for this batch
+        # Call the Core.display_logs function
         Core.display_logs(batch_id)
-        
-        # Restore stdout before any potential errors
-        sys.stdout = old_stdout
-        captured_output = result_capture.getvalue()
-        
-        # Ensure the output isn't empty
-        if not captured_output.strip():
-            captured_output = f"No display data found for batch ID {batch_id}"
-            logger.warning(f"Empty output when displaying batch {batch_id}")
     except Exception as e:
-        # Make sure stdout is restored even if an error occurs
-        sys.stdout = old_stdout
-        logger.error(f"Error showing batch results: {str(e)}")
-        captured_output = f"Error displaying batch results: {str(e)}"
+        logger.error(f"Error in function: {e}")
+    finally:
+        sys.stdout = old_stdout  # Ensure stdout is always restored
+
+    captured_output = result_capture.getvalue()
+    
+    # Ensure the output isn't empty
+    if not captured_output.strip():
+        captured_output = f"No display data found for batch ID {batch_id}"
+        logger.warning(f"Empty output when displaying batch {batch_id}")
     
     # Set font to monospace to preserve tabulate grid formatting
     text_widget = urwid.Text(('monospace', captured_output))
@@ -3853,6 +3849,9 @@ def show_date_range_filter():
         except ValueError:
             # Show error for invalid date format
             show_error_dialog("Invalid date format. Please use YYYY-MM-DD format.", show_date_range_filter)
+            logger.error("Invalid date format. Please use YYYY-MM-DD format.", exc_info=True)
+    
+    # Connect signals
     
     urwid.connect_signal(save_button, 'click', on_save_clicked)
     
@@ -4222,7 +4221,7 @@ def reset_filters():
     show_custom_filtered_records()
 
 def show_audit_log():
-    """Display Audit Log"""
+    """Display Audit Log using a grid layout"""
     global current_menu, menu_stack
     
     # Update menu tracking
@@ -4234,7 +4233,7 @@ def show_audit_log():
     
     # Check if logs directory exists
     if not os.path.exists(logs_dir):
-        # Display a message if no logs directory found
+        # Display error message (existing code)
         message = urwid.Text("No logs directory found. Audit logs are not available.")
         back_button = PlainButton("Back [esc]")
         urwid.connect_signal(back_button, 'click', go_back_one_level)
@@ -4258,17 +4257,18 @@ def show_audit_log():
         )
         return
     
-    # Get list of log files
+    # Get list of log files (excluding errors.log)
     log_files = []
     try:
         log_files = [f for f in os.listdir(logs_dir) 
                      if os.path.isfile(os.path.join(logs_dir, f)) 
-                     and (f.endswith('.log') or f.endswith('.txt'))]
+                     and (f.endswith('.log') or f.endswith('.txt'))
+                     and f != "errors.log"]
     except Exception as e:
         logger.error(f"Error listing log files: {e}")
     
     if not log_files:
-        # Display a message if no log files found
+        # Display error message (existing code)
         message = urwid.Text("No log files found in the logs directory.")
         back_button = PlainButton("Back [esc]")
         urwid.connect_signal(back_button, 'click', go_back_one_level)
@@ -4292,41 +4292,127 @@ def show_audit_log():
         )
         return
     
-    # Sort log files by modification time (newest first)
-    log_files.sort(key=lambda f: os.path.getmtime(os.path.join(logs_dir, f)), reverse=True)
+    # Categorize files by log level
+    log_levels = {
+        "debug": {"files": [], "total_size": 0, "last_updated": None},
+        "info": {"files": [], "total_size": 0, "last_updated": None},
+        "warning": {"files": [], "total_size": 0, "last_updated": None},
+        "error": {"files": [], "total_size": 0, "last_updated": None},
+        "critical": {"files": [], "total_size": 0, "last_updated": None},
+        "other": {"files": [], "total_size": 0, "last_updated": None}
+    }
     
-    # Create file list
-    file_items = []
+    # Process log files
     for log_file in log_files:
-        # Get modification time and file size for additional info
         file_path = os.path.join(logs_dir, log_file)
-        mod_time = os.path.getmtime(file_path)
-        mod_time_str = time.strftime('%d-%m-%Y', time.localtime(mod_time))
         file_size = os.path.getsize(file_path)
+        mod_time = os.path.getmtime(file_path)
         
-        # Format size nicely
-        if file_size < 1024:
-            size_str = f"{file_size} B"
-        elif file_size < 1024 * 1024:
-            size_str = f"{file_size/1024:.1f} KB"
+        level_date_match = re.match(r'(\w+)\.(\d{8})\.log', log_file)
+        
+        if level_date_match:
+            level, _ = level_date_match.groups()
+            level = level.lower()
+            
+            if level in log_levels:
+                log_levels[level]["files"].append(log_file)
+                log_levels[level]["total_size"] += file_size
+                
+                if log_levels[level]["last_updated"] is None or mod_time > log_levels[level]["last_updated"]:
+                    log_levels[level]["last_updated"] = mod_time
+            else:
+                log_levels["other"]["files"].append(log_file)
+                log_levels["other"]["total_size"] += file_size
+                
+                if log_levels["other"]["last_updated"] is None or mod_time > log_levels["other"]["last_updated"]:
+                    log_levels["other"]["last_updated"] = mod_time
         else:
-            size_str = f"{file_size/(1024*1024):.1f} MB"
-        
-        # Create button with file info
-        button_text = f"Log from: {mod_time_str} ({size_str})"
-        button = PlainButton(button_text)
-        urwid.connect_signal(button, 'click', 
-                             lambda button, path=file_path, name=log_file: view_log_file(path, name))
-        
-        # Add to list
-        file_items.append(urwid.AttrMap(button, None, focus_map="menu_focus"))
-        file_items.append(urwid.Divider())  # Space between items
+            log_levels["other"]["files"].append(log_file)
+            log_levels["other"]["total_size"] += file_size
+            
+            if log_levels["other"]["last_updated"] is None or mod_time > log_levels["other"]["last_updated"]:
+                log_levels["other"]["last_updated"] = mod_time
     
-    # Create a ListBox with all log files
-    list_walker = urwid.SimpleListWalker([urwid.Divider()] + file_items)
+    # Create grid header with weight-based columns (not fixed width)
+    header = urwid.Columns([
+        ('weight', 2, urwid.Text(('bold_title', "Log Level"))),
+        ('weight', 1, urwid.Text(('bold_title', "Files"))),
+        ('weight', 2, urwid.Text(('bold_title', "Size"))),
+        ('weight', 2, urwid.Text(('bold_title', "Date"))),
+        ('weight', 1, urwid.Text(('bold_title', "Time"))),
+        ('weight', 2, urwid.Text(('bold_title', "About")))
+    ])
+    
+    # Create header divider
+    divider = urwid.Divider('─')
+
+    # Add log level descriptions
+    log_descriptions = {
+        "debug": "Detailed diagnostic information for developers",
+        "info": "General operational information",
+        "warning": "Non-critical issues that should be reviewed",
+        "error": "Problems affecting functionality",
+        "critical": "Severe issues needing immediate action",
+        "other": "Miscellaneous logs not fitting other categories"
+}
+    
+    # Create rows for each log level
+    rows = []
+    for level, data in log_levels.items():
+        if not data["files"]:
+            continue  # Skip empty categories
+        
+        # Format file count
+        file_count = len(data["files"])
+        
+        # Format total size
+        total_size = data["total_size"]
+        if total_size < 1024:
+            size_str = f"{total_size} B"
+        elif total_size < 1024 * 1024:
+            size_str = f"{total_size/1024:.1f} KB"
+        else:
+            size_str = f"{total_size/(1024*1024):.1f} MB"
+        
+        # Format last updated date and time separately
+        date_str = "N/A"
+        time_str = "N/A"
+        if data["last_updated"]:
+            last_date = datetime.fromtimestamp(data["last_updated"])
+            date_str = last_date.strftime('%d-%m-%Y')
+            time_str = last_date.strftime('%H:%M')
+
+        # Get the description for this log level
+        description = log_descriptions.get(level, "")
+
+        # Create row columns with the same weight distribution as header
+        row_columns = urwid.Columns([
+            ('weight', 2, urwid.Text(level.capitalize())),
+            ('weight', 1, urwid.Text(str(file_count))),
+            ('weight', 2, urwid.Text(size_str)),
+            ('weight', 2, urwid.Text(date_str)),
+            ('weight', 1, urwid.Text(time_str)),
+            ('weight', 2, urwid.Text(description))
+        ])
+        
+        # Make the row selectable
+        row_btn = BatchRowButton(row_columns, level)
+        urwid.connect_signal(row_btn, 'click', 
+                           lambda button, lvl=level: show_log_files_by_level(lvl))
+        
+        rows.append(urwid.AttrMap(row_btn, None, focus_map="menu_focus"))
+    
+    # Combine header and rows
+    grid = [
+        header,
+        divider
+    ] + rows
+    
+    # Create scrollable list box
+    list_walker = urwid.SimpleListWalker(grid)
     list_box = urwid.ListBox(list_walker)
-    scrollable_area = urwid.ScrollBar(list_box)
-    content_box = urwid.BoxAdapter(scrollable_area, 20)
+    list_with_scrollbar = urwid.ScrollBar(list_box)
+    content_box = urwid.BoxAdapter(list_with_scrollbar, 20)
     
     # Back button
     back_button = PlainButton("Back [esc]")
@@ -4338,6 +4424,7 @@ def show_audit_log():
         ('weight', 1, urwid.Text(""))
     ])
     
+    # Main view
     view = urwid.Pile([
         content_box,
         urwid.Divider(),
@@ -4345,47 +4432,175 @@ def show_audit_log():
         urwid.Divider()
     ])
     
+    # Update main widget
     main.original_widget = apply_box_style(
-        urwid.Filler(view, valign='top', top=0, bottom=0),
-        title="Audit Log"
+        urwid.Filler(view, valign='top'),
+        title="Audit Log Categories"
     )
 
+    def show_log_files_by_level(level):
+        """Display log files of a specific level"""
+        global current_menu, menu_stack
+        
+        # Update menu tracking
+        if current_menu != f"audit_log_{level}":
+            menu_stack.append(current_menu)
+            current_menu = f"audit_log_{level}"
+        
+        logs_dir = os.path.join(os.getcwd(), 'logs')
+        
+        # Get log files for the specified level
+        log_files = []
+        try:
+            import re
+            for f in os.listdir(logs_dir):
+                if os.path.isfile(os.path.join(logs_dir, f)) and (f.endswith('.log') or f.endswith('.txt')):
+                    if level.lower() == "other":
+                        # For "other" category, include files that don't match the pattern
+                        if not re.match(r'(\w+)\.(\d{8})\.log', f) and f != "errors.log":
+                            log_files.append(f)
+                    else:
+                        # Match files for the specific level
+                        level_match = re.match(fr'{level}\.(\d{{8}})\.log', f)
+                        if level_match:
+                            log_files.append(f)
+        except Exception as e:
+            logger.error(f"Error listing log files: {e}")
+        
+        # Sort log files by modification time (newest first)
+        log_files.sort(key=lambda f: os.path.getmtime(os.path.join(logs_dir, f)), reverse=True)
+        
+        # Create file list
+        file_items = []
+        for log_file in log_files:
+            # Get modification time and file size for additional info
+            file_path = os.path.join(logs_dir, log_file)
+            mod_time = os.path.getmtime(file_path)
+            file_size = os.path.getsize(file_path)
+            
+            # Format size nicely
+            if file_size < 1024:
+                size_str = f"{file_size} B"
+            elif file_size < 1024 * 1024:
+                size_str = f"{file_size/1024:.1f} KB"
+            else:
+                size_str = f"{file_size/(1024*1024):.1f} MB"
+            
+            # Parse filename to extract log level and date
+            level_date_match = re.match(r'(\w+)\.(\d{8})\.log', log_file)
+            
+            if level_date_match:
+                # New format: "level.YYYYMMDD.log"
+                _, date_str = level_date_match.groups()
+                
+                # Convert YYYYMMDD to DD-MM-YYYY
+                try:
+                    year = date_str[0:4]
+                    month = date_str[4:6]
+                    day = date_str[6:8]
+                    formatted_date = f"{day}-{month}-{year}"
+                    
+                    button_text = f"{level.capitalize()} {formatted_date} ({size_str})"
+                except:
+                    # Fallback if date parsing fails
+                    button_text = f"{log_file} ({size_str})"
+            else:
+                # For other log files
+                button_text = f"{log_file} ({size_str})"
+            
+            # Create button with file info
+            button = PlainButton(button_text)
+            urwid.connect_signal(button, 'click', 
+                                 lambda button, path=file_path, name=log_file: view_log_file(path, name))
+            
+            # Add to list
+            file_items.append(urwid.AttrMap(button, None, focus_map="menu_focus"))
+            file_items.append(urwid.Divider())  # Space between items
+        
+        if not file_items:
+            # Display message if no files found for this level
+            file_items.append(urwid.Text(f"No {level} log files found."))
+            file_items.append(urwid.Divider())
+        
+        # Create a ListBox with all log files
+        list_walker = urwid.SimpleListWalker([urwid.Divider()] + file_items)
+        list_box = urwid.ListBox(list_walker)
+        scrollable_area = urwid.ScrollBar(list_box)
+        content_box = urwid.BoxAdapter(scrollable_area, 20)
+        
+        # Back button
+        back_button = PlainButton("Back [esc]")
+        urwid.connect_signal(back_button, 'click', go_back_one_level)
+        
+        button_container = urwid.Columns([
+            ('weight', 1, urwid.Text("")),
+            ('pack', urwid.AttrMap(back_button, None, focus_map="menu_focus")),
+            ('weight', 1, urwid.Text(""))
+        ])
+        
+        view = urwid.Pile([
+            content_box,
+            urwid.Divider(),
+            button_container,
+            urwid.Divider()
+        ])
+        
+        level_title = level.capitalize()
+        main.original_widget = apply_box_style(
+            urwid.Filler(view, valign='top', top=0, bottom=0),
+            title=f"{level_title} Logs"
+        )    
+
 def view_log_file(file_path, file_name):
-    """Display contents of a log file"""
+    """Display contents of a log file with improved formatting for JSON logs"""
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
             content = f.read()
             
-            # Process content to handle JSON log lines
-            processed_lines = []
-            for line in content.splitlines():
-                try:
-                    # Try to parse as JSON
-                    log_entry = json.loads(line)
-                    
-                    # Extract the parts we want to display
-                    timestamp = log_entry.get("timestamp", "")
-                    module = log_entry.get("module", "")
-                    function = log_entry.get("function", "")
-                    level = log_entry.get("level", "")
-                    message = log_entry.get("message", "")
-                    
-                    # Format as: "timestamp - module.function - LEVEL: message"
-                    processed_lines.append(f"{timestamp} - {module}.{function} - {level}: {message}")
-                except json.JSONDecodeError:
-                    # If not JSON, keep the original line
-                    processed_lines.append(line)
-                    
-            # Join processed lines back into content
-            content = '\n'.join(processed_lines)
-            
+        # Create header with separate Module and Function columns
+        header = urwid.Columns([
+            ('weight', 1, urwid.Text(('bold_title', "Time"))),
+            ('weight', 1, urwid.Text(('bold_title', "Module"))),
+            ('weight', 2, urwid.Text(('bold_title', "Function"))),
+            ('weight', 5, urwid.Text(('bold_title', "Message")))
+        ])
+        
+        # Add header divider
+        divider = urwid.Divider('─')
+        
+        # Process content to handle JSON log lines
+        processed_lines = []
+        for line in content.splitlines():
+            try:
+                # Try to parse as JSON
+                log_entry = json.loads(line)
+                
+                # Extract the parts we want to display
+                timestamp = log_entry.get("timestamp", "").split(" ")[1]  # Just take the time part
+                module = log_entry.get('module', '')
+                function = log_entry.get('function', '')
+                level = log_entry.get("level", "").upper()
+                message = log_entry.get("message", "")
+                
+                # Create a formatted line with separate module and function columns
+                line_widget = urwid.Columns([
+                    ('weight', 1, urwid.Text(timestamp)),
+                    ('weight', 1, urwid.Text(module)),
+                    ('weight', 2, urwid.Text(function)),
+                    ('weight', 5, urwid.Text(message))
+                ])
+                
+                processed_lines.append(line_widget)
+            except json.JSONDecodeError:
+                # If not JSON, keep the original line
+                processed_lines.append(urwid.Text(line))
+                
     except Exception as e:
         logger.error(f"Error reading log file {file_path}: {e}")
-        content = f"Error reading log file: {str(e)}"
+        processed_lines = [urwid.Text(f"Error reading log file: {str(e)}")]
     
-    # Create a text widget with the file content
-    text_widget = urwid.Text(content)
-    list_walker = urwid.SimpleListWalker([text_widget])
+    # Create a list walker with the header and all processed lines
+    list_walker = urwid.SimpleListWalker([header, divider] + processed_lines)
     list_box = urwid.ListBox(list_walker)
     scrollable_area = urwid.ScrollBar(list_box)
     content_box = urwid.BoxAdapter(scrollable_area, 25)
@@ -4409,7 +4624,7 @@ def view_log_file(file_path, file_name):
     
     main.original_widget = apply_box_style(
         urwid.Filler(view, valign='top', top=0, bottom=0),
-        title=f"{file_name}"
+        title=f"Log File: {file_name}"
     )
 
 # Global reference to the main loop

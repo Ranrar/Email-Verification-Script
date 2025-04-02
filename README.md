@@ -1,4 +1,4 @@
-[![CodeQL Advanced](https://github.com/Ranrar/EVS/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/Ranrar/EVS/actions/workflows/codeql.yml) [![Microsoft Defender For DevOps](https://github.com/Ranrar/EVS/actions/workflows/defender-for-devops.yml/badge.svg)](https://github.com/Ranrar/EVS/actions/workflows/defender-for-devops.yml)
+[![CodeQL Advanced](https://github.com/Ranrar/EVS/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/Ranrar/EVS/actions/workflows/codeql.yml)
 
 # Email Verification Script
 
@@ -21,6 +21,7 @@ verification methods.
 ![EVS-menu](https://github.com/user-attachments/assets/253788b2-c2a5-4329-968f-302a17fe1321)
 
 ## Core Features
+
 1. Email Format Validation:
    The script first checks whether the email address adheres to a 
    standard format (e.g., user@domain.com). Invalid emails are logged 
@@ -62,7 +63,9 @@ verification methods.
      connections on common SSL ports (993 for IMAP, 995 for POP3), 
      providing clues about the server's configuration and security.
 
+
 ## Advanced Features
+
 7. Confidence Scoring System:
    - Each validation includes a detailed confidence score (0-100) that evaluates email validity
    - Scoring levels include: Very High (90-100), High (70-89), Medium (50-69), Low (30-49), Very Low (0-29)
@@ -99,6 +102,7 @@ verification methods.
     - Customizable filenames with relevant metadata
    
 ## Technical Implementation
+
 13. Performance Optimization:
     - Smart TTL caching system for DNS and lookup operations
     - Configurable cache settings per operation type
@@ -139,6 +143,7 @@ verification methods.
     - Adaptive timeout adjustments based on server response patterns
 
 ## What to Expect
+
 1. Accuracy Limitations:
    - No Guarantees: The accuracy of email verification is never 100%. 
      Some mail servers may block commands (like VRFY or RCPT), making it 
@@ -160,6 +165,7 @@ verification methods.
    - The tool tracks and displays validation time for each email check.
    
 ## Use Cases for Internal Use
+
 This email verification tool can be used internally for various purposes, 
 including:
 
@@ -188,9 +194,10 @@ including:
 
 6. Performance Monitoring:
    - Tracks validation time for different email providers, helping you identify
-     slow or problematic servers that might affect your email operations.
+     slow or problematic servers that might affect your email operations
 
 ## Command Reference
+
 The script supports several commands:
 
 - 'help'      - Display help message
@@ -213,44 +220,117 @@ You can also enter one or more email addresses separated by commas to check thei
 For example: test@example.com, user@domain.com
 
 ## Changelog
+
+### Version 0.5.1 (02-04-2025)
+- **Additions:**
+
+- **Improvements:**
+  - Enhanced database connection handling with auto-recovery mechanisms
+  - Enhanced signal disconnection system to prevent memory leaks during navigation
+  - Added graceful cleanup during application exit for proper resource management
+
+- **Bug Fixes:**
+  - Fixed issue where database connections weren't properly released after validation operations
+  - Fixed signal disconnection issues when navigating between screens
+
+- **Security Updates:**
+- fixed when no information was logget from Try-Except-Pass
+
 ### Version 0.5 (29-03-2025)
-- Added audit log viewer with organized file sorting and detailed log viewing.
-- Improved batch progress tracking with live status updates.
-- Enhanced filter system for viewing records with multiple criteria.
-- Added export formats selection (CSV and JSON).
-- UI improvements with consistent navigation and styling.
-- Better error handling and user feedback throughout the application.
-- Added customization for confidence thresholds and validation behavior.
+- **Additions:**
+  - Added audit log viewer with organized file sorting and detailed log viewing
+  - Added export formats selection (CSV and JSON)
+  - Added customization for confidence thresholds and validation behavior
+  - Added support for detailed error categorization in validation results
+  - Added log archive organization with month-based folder structure
+
+- **Improvements:**
+  - Improved batch progress tracking with live status updates and detailed progress information
+  - Enhanced filter system for viewing records with multiple criteria
+  - UI improvements with consistent navigation, styling, and box design
+  - Better error handling and user feedback throughout the application
+  - Added improved error containment to prevent sensitive information disclosure
+
+- **Bug Fixes:**
+  - Addressed error handling in batch processing operations with better feedback
+
+- **Security Updates:**
+  - Improved error containment to prevent sensitive information disclosure
+  - Enhanced nameserver rotation and failover for improved resilience 
 
 ### Version 0.4 (15-03-2025)
-- Implemented batch history view with success rate metrics.
-- Added batch validation cancellation capability.
-- Improved multi-threading for parallel email validation.
-- Enhanced validation record viewing with tabulated display.
-- Fixed memory leaks in terminal history display.
+- **Additions:**
+  - Added database state refresh capability via `refresh` command in terminal mode
+  - Implemented batch history view with success rate metrics
+  - Added batch validation cancellation capability
+
+- **Improvements:**
+  - Improved multi-threading for parallel email validation
+  - Enhanced validation record viewing with tabulated display
+  - Optimized terminal history display with memory leak prevention
+
+- **Bug Fixes:**
+  - Fixed memory leaks in terminal history display
+  - Fixed inconsistent UI state during batch cancellation operations
+
+- **Security Updates:**
+  - Added confirmation requirements for destructive database operations
+  - Implemented rate limiting for DNS and SMTP operations to prevent server blocking
+  - Added domain protection system to prevent getting blacklisted by email servers
 
 ### Version 0.3 (01-03-2025)
-- Added disposable email detection.
-- Implemented domain blacklist checking.
-- Added IMAP/POP3 availability checking.
-- Enhanced validation algorithm with confidence scoring.
-- Improved terminal output formatting.
+- **Additions:**
+  - Added disposable email detection
+  - Implemented domain blacklist checking
+  - Added IMAP/POP3 availability checking
+  - Implemented connection pooling for SMTP operations to improve performance
+
+- **Improvements:**
+  - Enhanced validation algorithm with confidence scoring
+  - Improved terminal output formatting
+
+- **Bug Fixes:**
+  - Corrected validation scoring for domains with catch-all configurations
+
+- **Security Updates:**
+  - Implemented application state tracking system to detect and recover from abnormal terminations
 
 ### Version 0.2 (15-02-2025)
-- Initial batch processing capability.
-- Added basic email format validation.
-- Implemented simple terminal UI for interactive operation.
-- Added result storage in SQLite database.
-- Created initial configuration system.
+- **Additions:**
+  - Initial batch processing capability
+  - Added basic email format validation
+  - Implemented simple terminal UI for interactive operation
+  - Added result storage in SQLite database
+  - Created initial configuration system
+
+- **Improvements:**
+  - None in this release
+
+- **Bug Fixes:**
+  - None in this release
+
+- **Security Updates:**
+  - None in this release
 
 ### Version 0.1 (01-02-2025)
-- Initial release.
-- Basic email validation functionality.
-- Command-line interface.
-- Core validation engine.
-- Simple logging system.
+- **Additions:**
+  - Initial release
+  - Basic email validation functionality
+  - Command-line interface
+  - Core validation engine
+  - Simple logging system
+
+- **Improvements:**
+  - None in this release
+
+- **Bug Fixes:**
+  - None in this release
+
+- **Security Updates:**
+  - None in this release
 
 ## Future Updates
+
 The following features are planned for upcoming releases:
 
 1. Full Settings Menu Implementation:

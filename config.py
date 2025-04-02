@@ -7,7 +7,7 @@ from datetime import datetime
 from packages.logger.logger import P_Log, DEFAULT_LOGGER_NAME
 
 # Initialize logger early
-logger = P_Log(log_to_console=False)
+logger = P_Log(log_to_console=False, split_by_level=True)
 
 class ThreadPoolSettings:
     def __init__(self, config_instance):
@@ -187,7 +187,7 @@ class RateLimits:
             if result:
                 self._default_max_requests = int(result['max_requests'])
                 self._default_time_window = int(result['time_window'])
-                logger.debug(f"Loaded default rate limits: {self._default_max_requests} requests per {self._default_time_window}s")
+                logger.info(f"Loading rate limits: {self._default_max_requests} requests per {self._default_time_window}s")
         except Exception as e:
             logger.warning(f"Error loading default rate limits: {e}")
     
@@ -773,8 +773,6 @@ class config:
     def refresh_db_state(self):
         """Refreshes database state and clears cached values"""
         try:
-            # Close any existing connections that might be cached
-            logger.info("Refreshing database state and clearing caches")
             
             # Re-initialize settings accessors to reset their state
             self._db_available = self.db_exists()
@@ -799,7 +797,7 @@ class config:
             # Explicitly reload validation scores
             self.validation_scoring._load_scores()
             
-            logger.info("Database state refreshed and caches cleared")
+            logger.info("Database clearing caches")
             return True
         except Exception as e:
             logger.error(f"Failed to refresh database state: {e}")

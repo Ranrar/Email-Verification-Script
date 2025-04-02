@@ -26,7 +26,7 @@ from config import config
 cfg = config()
 
 # Initialize logger early
-logger = P_Log(log_to_console=False)
+logger = P_Log(log_to_console=False, split_by_level=True)
 
 # Common regex patterns
 EMAIL_PATTERN = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}$")
@@ -328,13 +328,13 @@ def get_mx_record(domain: str, _nameserver_list=None, _nameserver_index=0, _rate
         
         logger.warning(f"No MX records found for {domain}")
         return None
+    except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer, dns.resolver.NoNameservers) as e:
+        logger.debug(f"DNS lookup failed for {domain}: {e}")
+    except dns.exception.DNSException as e:
+        logger.debug(f"DNS operation failed for {domain}: {e}")
     except Exception as e:
-        # Log the error with nameserver information if available
-        if _rate_limit_key:
-            logger.error(f"DNS resolution error for {domain} using nameserver {_rate_limit_key}: {e}")
-        else:
-            logger.error(f"DNS resolution error for {domain}: {e}")
-        return None
+        logger.warning(f"Unexpected error in DNS operation for {domain}: {e}")
+    return None
 
 @ttl_cache('ttl_cache')
 @rate_limiter(operation_name='dns_lookup')
@@ -370,11 +370,13 @@ def check_spf(domain, _nameserver_list=None, _nameserver_index=0, _rate_limit_ke
             if SPF_PATTERN.search(str(rdata)):
                 return "SPF Found"
         return "No SPF Record"
-    except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
-        return "No SPF Record"
+    except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer, dns.resolver.NoNameservers) as e:
+        logger.debug(f"DNS lookup failed for {domain}: {e}")
+    except dns.exception.DNSException as e:
+        logger.debug(f"DNS operation failed for {domain}: {e}")
     except Exception as e:
-        logger.debug(f"SPF check failed for {domain}: {e}")
-        return "SPF Check Error"
+        logger.warning(f"Unexpected error in DNS operation for {domain}: {e}")
+    return "SPF Check Error"
 
 @ttl_cache('ttl_cache')
 @rate_limiter(operation_name='dns_lookup')
@@ -414,11 +416,13 @@ def check_dkim(domain, _nameserver_list=None, _nameserver_index=0, _rate_limit_k
             if DKIM_PATTERN.search(str(rdata)):
                 return "DKIM Found"
         return "No DKIM Record"
-    except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
-        return "No DKIM Record"
+    except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer, dns.resolver.NoNameservers) as e:
+        logger.debug(f"DNS lookup failed for {domain}: {e}")
+    except dns.exception.DNSException as e:
+        logger.debug(f"DNS operation failed for {domain}: {e}")
     except Exception as e:
-        logger.debug(f"DKIM check failed for {domain}: {e}")
-        return "DKIM Check Error"
+        logger.warning(f"Unexpected error in DNS operation for {domain}: {e}")
+    return "DKIM Check Error"
 
 @rate_limiter(operation_name='dns_lookup')
 def get_mx_ip(server, _nameserver_list=None, _nameserver_index=0, _rate_limit_key=None):
@@ -554,9 +558,12 @@ def check_server_policies(domain: str, _nameserver_list=None, _nameserver_index=
             if "v=DMARC1" in str(rdata):
                 policies.append("DMARC")
                 break
+    except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer, dns.resolver.NoNameservers) as e:
+        logger.debug(f"DNS lookup failed for {domain}: {e}")
+    except dns.exception.DNSException as e:
+        logger.debug(f"DNS operation failed for {domain}: {e}")
     except Exception as e:
-        # Handle all DNS exceptions including NoNameservers
-        logger.debug(f"DMARC policy check failed for {domain}: {e}")
+        logger.warning(f"Unexpected error in DNS operation for {domain}: {e}")
     
     # Check for RFC 7208 (SPF) reject policies
     try:
@@ -566,9 +573,12 @@ def check_server_policies(domain: str, _nameserver_list=None, _nameserver_index=
             if "v=spf1" in txt and ("-all" in txt or "~all"):
                 policies.append("Strict SPF")
                 break
+    except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer, dns.resolver.NoNameservers) as e:
+        logger.debug(f"DNS lookup failed for {domain}: {e}")
+    except dns.exception.DNSException as e:
+        logger.debug(f"DNS operation failed for {domain}: {e}")
     except Exception as e:
-        # Handle all DNS exceptions
-        logger.debug(f"SPF policy check failed for {domain}: {e}")
+        logger.warning(f"Unexpected error in DNS operation for {domain}: {e}")
     
     # Check for explicit reject policies in TXT records
     if policies:
@@ -2529,8 +2539,8 @@ def safe_smtp_connection(server, port):
         if smtp:
             try:
                 smtp.quit()
-            except Exception:
-                pass 
+            except Exception as e:
+                logger.debug(f"Error during SMTP cleanup: {e}")
 
 def get_confidence_level(score):
     """Get confidence level based on score using config"""
@@ -2589,114 +2599,184 @@ def initialize_system():
 
 def shutdown():
     """Properly shut down all Core module resources"""
-    global smtp_pool, cfg  # Add cfg to globals
+    global smtp_pool, cfg
     
     try:
         logger.info("Core module shutting down...")
         
-        # 1. Close SMTP connection pool
-        if smtp_pool:
-            logger.debug("Closing SMTP connection pool")
-            for server_key in list(smtp_pool.pool.keys()):
-                for smtp in smtp_pool.pool[server_key]:
-                    try:
-                        smtp.quit()
-                    except Exception as e:
-                        logger.debug(f"Error closing SMTP connection: {e}")
-            smtp_pool.pool.clear()
-            logger.info("SMTP connection pool closed")
+        # Track success and failures
+        success_count = 0
+        failed_operations = []
         
-        # 2. Clear cached data from ttl_cache decorators
+        # 1. First, refresh config caches to prevent later reloading
         try:
-            # Find all functions with ttl_cache decorator
+            # Reset any LRU caches in the config module
+            if hasattr(cfg, 'refresh'):
+                logger.debug("Refreshing config caches")
+                cfg.refresh()
+                logger.info("Step 1/9: Config caches refreshed successfully")
+            else:
+                logger.info("Step 1/9: No config caches to refresh")
+            success_count += 1
+        except Exception as e:
+            logger.error(f"Step 1/9: Failed to refresh config caches: {e}")
+            failed_operations.append("Config Caches")
+        
+        # 2. Close SMTP connection pool
+        try:
+            if smtp_pool:
+                logger.debug("Closing SMTP connection pool")
+                for server_key in list(smtp_pool.pool.keys()):
+                    for smtp in smtp_pool.pool[server_key]:
+                        try:
+                            smtp.quit()
+                        except Exception as e:
+                            logger.debug(f"Error closing SMTP connection: {e}")
+                smtp_pool.pool.clear()
+                logger.info("Step 2/9: SMTP connection pool closed successfully")
+                success_count += 1
+            else:
+                logger.info("Step 2/9: SMTP connection pool was not initialized, skipping")
+                success_count += 1
+        except Exception as e:
+            logger.error(f"Step 2/9: Failed to close SMTP connection pool: {e}")
+            failed_operations.append("SMTP Connection Pool")
+        
+        # 3. Clear cached data from ttl_cache decorators
+        try:
+            cache_cleared = False
             for name, func in globals().items():
                 if callable(func) and hasattr(func, 'cache'):
                     logger.debug(f"Clearing cache for {name}")
                     func.cache.clear()
                     if hasattr(func, 'timestamps'):
                         func.timestamps.clear()
+                    cache_cleared = True
+            
+            if cache_cleared:
+                logger.info("Step 3/9: Function caches cleared successfully")
+            else:
+                logger.info("Step 3/9: No function caches to clear")
+            success_count += 1
         except Exception as e:
-            logger.warning(f"Error clearing function caches: {e}")
+            logger.error(f"Step 3/9: Failed to clear function caches: {e}")
+            failed_operations.append("Cache Clearing")
         
-        # 3. Close any active thread pools
+        # 4. Close any active thread pools
         try:
-            # If you have any persistent ThreadPoolExecutors
-            # (None explicitly seen in the code, but good practice)
             if 'thread_pool' in globals() and globals()['thread_pool']:
                 logger.debug("Shutting down thread pool")
                 globals()['thread_pool'].shutdown(wait=True)
+                logger.info("Step 4/9: Thread pool shut down successfully")
+            else:
+                logger.info("Step 4/9: No active thread pools to shut down")
+            success_count += 1
         except Exception as e:
-            logger.warning(f"Error shutting down thread pool: {e}")
-        
-        # 4. Release DNS resolver resources
-        try:
-            import dns.resolver
-            dns.resolver.default_resolver.reset()
-            logger.debug("DNS resolver reset")
-        except Exception as e:
-            logger.warning(f"Error resetting DNS resolver: {e}")
-        
-        # 5. Commit any pending database changes
-        try:
-            # Assuming cfg.connect() returns a connection that might need closing
-            if hasattr(cfg, 'db') and cfg.db:
-                logger.debug("Closing database connection")
-                cfg.db.close()
-        except Exception as e:
-            logger.warning(f"Error closing database connection: {e}")
-        
-        # 6. Close any open database connections via config
-        try:
-            # Call refresh_db_state to clear any cached connections
-            if cfg and hasattr(cfg, 'refresh_db_state'):
-                logger.debug("Refreshing database state to clean connections")
-                cfg.refresh_db_state()
-                
-            # If any database connection is maintained at class level
-            if hasattr(cfg, '_connection') and cfg._connection:
-                logger.debug("Closing persistent database connection")
-                cfg._connection.close()
-                cfg._connection = None
-        except Exception as e:
-            logger.warning(f"Error closing database connections: {e}")
+            logger.error(f"Step 4/9: Failed to shut down thread pool: {e}")
+            failed_operations.append("Thread Pool")
             
-        # 7. Clear any cached data in config accessors
+        # 5. Clear any pending background tasks - before DNS cleanup
         try:
-            # Reset any LRU caches in the config module
-            if hasattr(cfg, 'refresh'):
-                logger.debug("Refreshing config caches")
-                cfg.refresh()
-        except Exception as e:
-            logger.warning(f"Error refreshing config caches: {e}")
-            
-        # 8. Clear any pending background tasks
-        try:
+            task_count = 0
             if 'background_tasks' in globals() and globals()['background_tasks']:
                 logger.debug("Cancelling any pending background tasks")
                 for task in globals()['background_tasks']:
                     if hasattr(task, 'cancel') and callable(task.cancel):
                         task.cancel()
+                        task_count += 1
+                        
+            if task_count > 0:
+                logger.info(f"Step 5/9: {task_count} background tasks cancelled successfully")
+            else:
+                logger.info("Step 5/9: No background tasks to cancel")
+            success_count += 1
         except Exception as e:
-            logger.warning(f"Error cancelling background tasks: {e}")
+            logger.error(f"Step 5/9: Failed to cancel background tasks: {e}")
+            failed_operations.append("Background Tasks")
         
-        # 9. Release any file locks
+        # 6. Release any file locks - before DNS cleanup
         try:
             import glob
             lock_files = glob.glob(os.path.join(os.getcwd(), '*.lock'))
-            for lock_file in lock_files:
-                try:
-                    os.remove(lock_file)
-                    logger.debug(f"Removed lock file: {lock_file}")
-                except Exception as e:
-                    logger.warning(f"Could not remove lock file {lock_file}: {e}")
+            if lock_files:
+                for lock_file in lock_files:
+                    try:
+                        os.remove(lock_file)
+                        logger.debug(f"Removed lock file: {lock_file}")
+                    except Exception as e:
+                        logger.warning(f"Could not remove lock file {lock_file}: {e}")
+                logger.info(f"Step 6/9: Removed {len(lock_files)} lock files successfully")
+            else:
+                logger.info("Step 6/9: No lock files to remove")
+            success_count += 1
         except Exception as e:
-            logger.warning(f"Error cleaning up lock files: {e}")
+            logger.error(f"Step 6/9: Failed to clean up lock files: {e}")
+            failed_operations.append("File Locks")
+        
+        # 7. Disconnect from database (do this BEFORE DNS operations)
+        try:
+            # Assuming cfg.connect() returns a connection that might need closing
+            if hasattr(cfg, 'db') and cfg.db:
+                logger.debug("Closing database connection")
+                cfg.db.close()
+                logger.info("Step 7/9: Database connection closed successfully")
+            else:
+                logger.info("Step 7/9: No direct database connection to close")
+                
+            # Close any persistent connection at class level
+            if hasattr(cfg, '_connection') and cfg._connection:
+                logger.debug("Closing persistent database connection")
+                cfg._connection.close()
+                cfg._connection = None
+                
+            success_count += 1
+        except Exception as e:
+            logger.error(f"Step 7/9: Failed to close database connection: {e}")
+            failed_operations.append("Database Connection")
+        
+        # 8. NOW release DNS resolver resources - after DB is closed
+        try:
+            import dns.resolver
+            if hasattr(dns.resolver, 'default_resolver') and dns.resolver.default_resolver:
+                if hasattr(dns.resolver.default_resolver, 'reset'):
+                    dns.resolver.default_resolver.reset()
+                    logger.info("Step 8/9: DNS resolver reset successfully")
+                elif hasattr(dns.resolver.default_resolver, 'nameservers'):
+                    # Alternative approach: clear nameservers
+                    dns.resolver.default_resolver.nameservers = []
+                    logger.info("Step 8/9: DNS resolver nameservers cleared successfully")
+                else:
+                    logger.info("Step 8/9: DNS resolver has no reset method or nameservers attribute")
+            else:
+                logger.info("Step 8/9: No DNS resolver to reset")
+            success_count += 1
+        except Exception as e:
+            logger.error(f"Step 8/9: Failed to reset DNS resolver: {e}")
+            failed_operations.append("DNS Resolver")
+        
+        # 9. Final database state refresh
+        try:
+            if cfg and hasattr(cfg, 'refresh_db_state'):
+                logger.debug("Final database state refresh")
+                cfg.refresh_db_state()
+                logger.info("Step 9/9: Final database state refresh completed")
+            else:
+                logger.info("Step 9/9: No database state to refresh")
+            success_count += 1
+        except Exception as e:
+            logger.error(f"Step 9/9: Failed final database refresh: {e}")
+            failed_operations.append("Final Database Refresh")
+        
+        # Log summary of shutdown process
+        if failed_operations:
+            logger.warning(f"Core module shutdown completed with {success_count}/9 successful operations. Failed operations: {', '.join(failed_operations)}")
+        else:
+            logger.info(f"Core module shutdown completed successfully ({success_count}/9 operations)")
             
-        logger.info("Core module shutdown complete")
         return True
         
     except Exception as e:
-        logger.error(f"Error during Core shutdown: {e}", exc_info=True)
+        logger.error(f"Critical error during Core shutdown: {e}", exc_info=True)
         return False
 
 def start_batch_validation(batch_id):

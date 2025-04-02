@@ -18,10 +18,9 @@ def get_logger(name=DEFAULT_LOGGER_NAME, to_console=False):
     return get_logger.instances[name]
 
 # Get a singleton logger instance - no need to specify name
-logger = get_logger(to_console=False)  # Uses DEFAULT_LOGGER_NAME by default
+logger = P_Log(log_to_console=False, split_by_level=True)  # Uses DEFAULT_LOGGER_NAME by default
 
 # First check for dependencies
-logger.info("Checking for required dependencies...")
 required_dependencies = ["urwid", "dns", "requests", "tabulate", "sqlite3"]
 missing_dependencies = []
 
