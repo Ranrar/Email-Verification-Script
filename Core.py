@@ -2070,6 +2070,7 @@ def display_logs_standalone():
                         dt = datetime.fromisoformat(value)
                         value = dt.strftime("%d-%m-%y %H:%M")
                     except:
+                        logger.debug(f"Failed to format datetime value for {col}: {value}")
                         pass
                         
                 # Format confidence score with level
