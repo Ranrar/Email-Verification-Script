@@ -1973,6 +1973,7 @@ def _display_basic_batch_info(batch_info):
                 dt = datetime.fromisoformat(value)
                 value = dt.strftime("%Y-%m-%d %H:%M:%S")
             except:
+                logger.debug(f"Failed to format datetime value for {key}: {value}")
                 pass
         
         # Print property and value (ensure value is converted to string)
@@ -2521,8 +2522,9 @@ class SMTPConnectionPool:
                     try:
                         smtp.quit()
                     except:
+                        logger.debug(f"Pool for {server_key} full, closed connection")
                         pass
-                    logger.debug(f"Pool for {server_key} full, closed connection")
+                    
 
 @contextmanager
 def safe_smtp_connection(server, port):

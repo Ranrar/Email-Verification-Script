@@ -633,8 +633,10 @@ class BatchInfo:
             if batch.get('settings_snapshot'):
                 try:
                     batch['settings_snapshot'] = json.loads(batch['settings_snapshot'])
-                except:
-                    pass  # Keep as string if JSON parsing fails
+                except json.JSONDecodeError as e:
+                    # Log the error but keep the original string value
+                    logger.debug(f"Could not parse settings_snapshot as JSON for batch {batch.get('id', 'unknown')}: {e}")
+                    pass
                     
             return batch
         except Exception as e:

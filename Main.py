@@ -3308,7 +3308,7 @@ def show_batch_results(batch_id):
             if not any(attr[0] == 'monospace' for attr in loop.screen.register_palette):
                 loop.screen.register_palette_entry('monospace', 'white', 'black', 'standout')
         except:
-            # If we can't modify the palette, just continue
+            logger.debug("Failed to update palette with monospace attribute")
             pass
 
 def format_timestamp(timestamp_str):
