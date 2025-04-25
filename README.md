@@ -20,7 +20,7 @@ verification methods.
 
 ![EVS-menu](https://github.com/user-attachments/assets/253788b2-c2a5-4329-968f-302a17fe1321)
 
-*Even though it is made on [urwid](https://github.com/urwid/urwid), it still works with limited functionality in Windows*
+*Even though it is made on [urwid](https://github.com/urwid/urwid), it still works on Windows*
 
 
 ## Core Features
